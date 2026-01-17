@@ -1,15 +1,21 @@
 import * as vscode from "vscode";
 import { TerminalManager } from "./terminalManager";
-import { verifyAndRunCaptured } from "./commandExecutor";
+import {
+	verifyAndRunCaptured,
+	runShellCommandCaptured,
+} from "./commandExecutor";
+import { getRepoContext, RepoContext } from "./repoContext";
 
 interface GittyState {
 	isListening: boolean;
 	lastVerifiedCommand: string | undefined;
+	repoContext: RepoContext | undefined;
 }
 
 const state: GittyState = {
 	isListening: false,
 	lastVerifiedCommand: undefined,
+	repoContext: undefined,
 };
 
 let statusBarItem: vscode.StatusBarItem;
@@ -203,6 +209,33 @@ export function activate(context: vscode.ExtensionContext) {
 			);
 		},
 	);
+	// Command: Refresh Repo Context
+	const refreshRepoContextCommand = vscode.commands.registerCommand(
+		"gitty.refreshRepoContext",
+		async () => {
+			const root = getWorkspaceRoot();
+			state.repoContext = await getRepoContext(root, runCaptured);
+
+			outputChannel.appendLine(
+				`[Repo Context] Refresh at ${state.repoContext.updatedAtIso}`,
+			);
+			outputChannel.appendLine(
+				`  Workspace: ${state.repoContext.workspaceRoot ?? "(none)"}`,
+			);
+			outputChannel.appendLine(
+				`  Git Root:  ${state.repoContext.gitRoot ?? "(none)"}`,
+			);
+			outputChannel.appendLine(
+				`  Branch:    ${state.repoContext.branch ?? "(none)"}`,
+			);
+			outputChannel.appendLine(
+				`  Is Clean:  ${state.repoContext.isClean ?? "unknown"}`,
+			);
+
+			broadcastState();
+		},
+	);
+
 	// Status Bar
 	statusBarItem = vscode.window.createStatusBarItem(
 		vscode.StatusBarAlignment.Left,
@@ -220,9 +253,24 @@ export function activate(context: vscode.ExtensionContext) {
 		runCommandVerified,
 		runLastCommandAgain,
 		debugRunCommand,
+		refreshRepoContextCommand,
 		statusBarItem,
 		outputChannel,
 	);
+}
+
+function getWorkspaceRoot(): string | null {
+	if (
+		vscode.workspace.workspaceFolders &&
+		vscode.workspace.workspaceFolders.length > 0
+	) {
+		return vscode.workspace.workspaceFolders[0].uri.fsPath;
+	}
+	return null;
+}
+
+async function runCaptured(cmd: string, cwd: string) {
+	return runShellCommandCaptured(cmd, { cwd }); // uses default timeout
 }
 
 function toggleListening() {
@@ -244,6 +292,7 @@ function broadcastState() {
 			command: "updateState",
 			isListening: state.isListening,
 			lastVerifiedCommand: state.lastVerifiedCommand,
+			repoContext: state.repoContext,
 		});
 	}
 }
@@ -251,6 +300,8 @@ function broadcastState() {
 function setupWebview(context: vscode.ExtensionContext) {
 	if (currentPanel) {
 		currentPanel.reveal(vscode.ViewColumn.Beside);
+		// Force refresh context so UI isn't empty on focus
+		vscode.commands.executeCommand("gitty.refreshRepoContext");
 		return;
 	}
 
@@ -265,6 +316,9 @@ function setupWebview(context: vscode.ExtensionContext) {
 
 	// Set initial HTML content with current state
 	currentPanel.webview.html = getWebviewContent(state);
+
+	// Initial refresh to populate data
+	vscode.commands.executeCommand("gitty.refreshRepoContext");
 
 	// Handle messages from the webview
 	currentPanel.webview.onDidReceiveMessage(
@@ -283,6 +337,9 @@ function setupWebview(context: vscode.ExtensionContext) {
 				case "runLastCommandAgain":
 					await vscode.commands.executeCommand("gitty.runLastCommandAgain");
 					broadcastState();
+					break;
+				case "refreshRepoContext":
+					await vscode.commands.executeCommand("gitty.refreshRepoContext");
 					break;
 			}
 		},
@@ -304,6 +361,18 @@ function getWebviewContent(initialState: GittyState) {
 	const stateLabel = initialState.isListening ? "Listening" : "Idle";
 	const lastCommandLabel = initialState.lastVerifiedCommand ?? "(none)";
 
+	// Context formatting
+	const ctx = initialState.repoContext;
+	const gitRoot = ctx?.gitRoot ?? "(scanning...)";
+	const branch = ctx?.branch ?? "(unknown)";
+	const clean =
+		ctx?.isClean === undefined ? "(unknown)" : ctx.isClean ? "Yes" : "No";
+	const porcelain = ctx?.statusPorcelain
+		? ctx.statusPorcelain.length > 2000
+			? ctx.statusPorcelain.substring(0, 2000) + "..."
+			: ctx.statusPorcelain
+		: "";
+
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -315,6 +384,7 @@ function getWebviewContent(initialState: GittyState) {
         h1 { font-size: 1.5em; }
         h2 { font-size: 1.2em; margin-top: 20px; }
         p { margin-bottom: 20px; }
+        pre { background: var(--vscode-textCodeBlock-background); padding: 10px; overflow: auto; max-height: 200px; }
         button { 
             padding: 8px 16px; 
             cursor: pointer; 
@@ -328,6 +398,10 @@ function getWebviewContent(initialState: GittyState) {
             background-color: var(--vscode-button-hoverBackground);
         }
         .command-section {
+            border-top: 1px solid var(--vscode-panel-border);
+            padding-top: 10px;
+        }
+        .context-section {
             border-top: 1px solid var(--vscode-panel-border);
             padding-top: 10px;
         }
@@ -346,11 +420,26 @@ function getWebviewContent(initialState: GittyState) {
         <p id="last-command-text">Last command: ${lastCommandLabel}</p>
     </div>
 
+    <div class="context-section">
+        <h2>Repo Context</h2>
+        <button id="refresh-ctx-btn">Refresh Repo Context</button>
+        <p><strong>Git Root:</strong> <span id="ctx-root">${gitRoot}</span></p>
+        <p><strong>Branch:</strong> <span id="ctx-branch">${branch}</span></p>
+        <p><strong>Clean:</strong> <span id="ctx-clean">${clean}</span></p>
+        <pre id="ctx-porcelain">${porcelain}</pre>
+    </div>
+
     <script>
         const vscode = acquireVsCodeApi();
         const statusText = document.getElementById('status-text');
         const lastCommandText = document.getElementById('last-command-text');
         
+        // Context elements
+        const ctxRoot = document.getElementById('ctx-root');
+        const ctxBranch = document.getElementById('ctx-branch');
+        const ctxClean = document.getElementById('ctx-clean');
+        const ctxPorcelain = document.getElementById('ctx-porcelain');
+
         // Buttons
         document.getElementById('toggle-btn').addEventListener('click', () => {
             vscode.postMessage({ command: 'toggle' });
@@ -364,17 +453,32 @@ function getWebviewContent(initialState: GittyState) {
         document.getElementById('run-last-btn').addEventListener('click', () => {
              vscode.postMessage({ command: 'runLastCommandAgain' });
         });
+        document.getElementById('refresh-ctx-btn').addEventListener('click', () => {
+             vscode.postMessage({ command: 'refreshRepoContext' });
+        });
 
         // Handle messages from extension
         window.addEventListener('message', event => {
             const message = event.data;
             switch (message.command) {
                 case 'updateState':
+                    // existing updates
                     const stateStr = message.isListening ? 'Listening' : 'Idle';
                     const lastCmd = message.lastVerifiedCommand ? message.lastVerifiedCommand : '(none)';
-                    
                     statusText.textContent = 'State: ' + stateStr;
                     lastCommandText.textContent = 'Last command: ' + lastCmd;
+
+                    // context updates
+                    const ctx = message.repoContext;
+                    if (ctx) {
+                        ctxRoot.textContent = ctx.gitRoot || '(not a git repo)';
+                        ctxBranch.textContent = ctx.branch || '(no branch)';
+                        ctxClean.textContent = ctx.isClean ? 'Yes' : 'No';
+                        
+                        let p = ctx.statusPorcelain || '';
+                        if (p.length > 2000) p = p.substring(0, 2000) + '...';
+                        ctxPorcelain.textContent = p;
+                    }
                     break;
             }
         });

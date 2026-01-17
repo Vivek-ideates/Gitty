@@ -16,7 +16,8 @@
     "onCommand:gitty.sendTextToTerminal",
     "onCommand:gitty.debugRunGitStatus",
     "onCommand:gitty.runCommandVerified",
-    "onCommand:gitty.runLastCommandAgain"
+    "onCommand:gitty.runLastCommandAgain",
+    "onCommand:gitty.refreshRepoContext"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -48,6 +49,10 @@
       {
         "command": "gitty.runLastCommandAgain",
         "title": "Gitty: Run Last Command Again (Verified)"
+      },
+      {
+        "command": "gitty.refreshRepoContext",
+        "title": "Gitty: Refresh Repo Context"
       }
     ]
   },
