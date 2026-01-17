@@ -273,8 +273,11 @@ async function runCaptured(cmd: string, cwd: string) {
 	return runShellCommandCaptured(cmd, { cwd }); // uses default timeout
 }
 
-function toggleListening() {
+async function toggleListening() {
 	updateListeningState(!state.isListening);
+	if (state.isListening) {
+		await vscode.commands.executeCommand("gitty.refreshRepoContext");
+	}
 }
 
 function updateListeningState(listening: boolean) {
