@@ -1,26 +1,147 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
-import * as vscode from 'vscode';
+import * as vscode from "vscode";
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
+let isListening = false;
+let statusBarItem: vscode.StatusBarItem;
+let currentPanel: vscode.WebviewPanel | undefined = undefined;
+
 export function activate(context: vscode.ExtensionContext) {
+	// Command: Toggle Listening
+	const toggleCommand = vscode.commands.registerCommand(
+		"gitty.toggleListening",
+		() => {
+			toggleListening();
+		},
+	);
 
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "gitty" is now active!');
+	// Command: Open Coach
+	const openCoachCommand = vscode.commands.registerCommand(
+		"gitty.openCoach",
+		() => {
+			setupWebview(context);
+		},
+	);
 
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('gitty.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from gitty!');
-	});
+	// Status Bar
+	statusBarItem = vscode.window.createStatusBarItem(
+		vscode.StatusBarAlignment.Left,
+	);
+	statusBarItem.command = "gitty.toggleListening";
+	// Initialize status bar state
+	statusBarItem.text = "Gitty: Idle";
+	statusBarItem.show();
 
-	context.subscriptions.push(disposable);
+	context.subscriptions.push(toggleCommand, openCoachCommand, statusBarItem);
 }
 
-// This method is called when your extension is deactivated
+function toggleListening() {
+	updateListeningState(!isListening);
+}
+
+function updateListeningState(listening: boolean) {
+	isListening = listening;
+
+	// Update Status Bar
+	statusBarItem.text = isListening ? "Gitty: Listening" : "Gitty: Idle";
+
+	// Update Webview if open
+	if (currentPanel) {
+		currentPanel.webview.postMessage({ command: "updateState", isListening });
+	}
+}
+
+function setupWebview(context: vscode.ExtensionContext) {
+	if (currentPanel) {
+		currentPanel.reveal(vscode.ViewColumn.Beside);
+		return;
+	}
+
+	currentPanel = vscode.window.createWebviewPanel(
+		"gittyCoach",
+		"Gitty Coach",
+		vscode.ViewColumn.Beside,
+		{
+			enableScripts: true,
+		},
+	);
+
+	// Set initial HTML content with current state
+	currentPanel.webview.html = getWebviewContent(isListening);
+
+	// Handle messages from the webview
+	currentPanel.webview.onDidReceiveMessage(
+		(message) => {
+			switch (message.command) {
+				case "toggle":
+					toggleListening();
+					return;
+			}
+		},
+		undefined,
+		context.subscriptions,
+	);
+
+	// Cleanup when panel is closed
+	currentPanel.onDidDispose(
+		() => {
+			currentPanel = undefined;
+		},
+		null,
+		context.subscriptions,
+	);
+}
+
+function getWebviewContent(initialState: boolean) {
+	const stateLabel = initialState ? "Listening" : "Idle";
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gitty Coach</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        h1 { font-size: 1.5em; }
+        p { margin-bottom: 20px; }
+        button { 
+            padding: 8px 16px; 
+            cursor: pointer; 
+            background-color: var(--vscode-button-background); 
+            color: var(--vscode-button-foreground); 
+            border: none; 
+        }
+        button:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+    </style>
+</head>
+<body>
+    <h1>Gitty Coach (MVP)</h1>
+    <p id="status-text">State: ${stateLabel}</p>
+    <button id="toggle-btn">Toggle Listening</button>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        const statusText = document.getElementById('status-text');
+        const btn = document.getElementById('toggle-btn');
+
+        // Handle button click
+        btn.addEventListener('click', () => {
+            vscode.postMessage({ command: 'toggle' });
+        });
+
+        // Handle messages from extension
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.command) {
+                case 'updateState':
+                    const stateStr = message.isListening ? 'Listening' : 'Idle';
+                    statusText.textContent = 'State: ' + stateStr;
+                    break;
+            }
+        });
+    </script>
+</body>
+</html>`;
+}
+
 export function deactivate() {}

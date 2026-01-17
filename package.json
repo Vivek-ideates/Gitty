@@ -9,13 +9,20 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onCommand:gitty.openCoach",
+    "onCommand:gitty.toggleListening"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "gitty.helloWorld",
-        "title": "Hello World"
+        "command": "gitty.openCoach",
+        "title": "Gitty: Open Coach"
+      },
+      {
+        "command": "gitty.toggleListening",
+        "title": "Gitty: Toggle Listening"
       }
     ]
   },
