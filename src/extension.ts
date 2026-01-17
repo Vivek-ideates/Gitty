@@ -5,27 +5,36 @@ import {
 	runShellCommandCaptured,
 } from "./commandExecutor";
 import { getRepoContext, RepoContext } from "./repoContext";
+import { VoiceController, VoiceSnapshot } from "./voiceController";
 
 interface GittyState {
 	isListening: boolean;
 	lastVerifiedCommand: string | undefined;
 	repoContext: RepoContext | undefined;
+	voice: VoiceSnapshot;
 }
 
 const state: GittyState = {
 	isListening: false,
 	lastVerifiedCommand: undefined,
 	repoContext: undefined,
+	voice: { state: "off" },
 };
 
 let statusBarItem: vscode.StatusBarItem;
 let currentPanel: vscode.WebviewPanel | undefined = undefined;
 let terminalManager: TerminalManager;
 let outputChannel: vscode.OutputChannel;
+let voiceController: VoiceController;
 
 export function activate(context: vscode.ExtensionContext) {
 	terminalManager = new TerminalManager();
 	outputChannel = vscode.window.createOutputChannel("Gitty");
+
+	// Initialize Voice Controller
+	voiceController = new VoiceController((snap) => {
+		onVoiceChange(snap);
+	});
 
 	// Command: Toggle Listening
 	const toggleCommand = vscode.commands.registerCommand(
@@ -236,6 +245,24 @@ export function activate(context: vscode.ExtensionContext) {
 		},
 	);
 
+	// Command: Voice Start
+	const voiceStartCommand = vscode.commands.registerCommand("gitty.voiceStart", () => {
+		voiceController.startWakeListening();
+		// Best effort context refresh
+		vscode.commands.executeCommand("gitty.refreshRepoContext");
+	});
+
+	// Command: Voice Stop
+	const voiceStopCommand = vscode.commands.registerCommand("gitty.voiceStop", () => {
+		voiceController.stop();
+	});
+
+	// Command: Simulate Wake Word
+	const voiceSimulateCommand = vscode.commands.registerCommand("gitty.simulateWakeWord", () => {
+		voiceController.simulateWakeWord();
+		vscode.commands.executeCommand("gitty.openCoach");
+	});
+
 	// Status Bar
 	statusBarItem = vscode.window.createStatusBarItem(
 		vscode.StatusBarAlignment.Left,
@@ -254,9 +281,37 @@ export function activate(context: vscode.ExtensionContext) {
 		runLastCommandAgain,
 		debugRunCommand,
 		refreshRepoContextCommand,
+		voiceStartCommand,
+		voiceStopCommand,
+		voiceSimulateCommand,
 		statusBarItem,
 		outputChannel,
 	);
+}
+
+function onVoiceChange(snap: VoiceSnapshot) {
+	state.voice = snap;
+	
+	// Update Status Bar
+	switch (snap.state) {
+		case "off":
+			statusBarItem.text = "Gitty: Idle";
+			break;
+		case "wake_listening":
+			statusBarItem.text = "Gitty: Listening (Wake)";
+			break;
+		case "command_listening":
+			statusBarItem.text = "Gitty: Listening (Command)";
+			break;
+		case "processing":
+			statusBarItem.text = "Gitty: Processing";
+			break;
+		case "awaiting_confirmation":
+			statusBarItem.text = "Gitty: Awaiting Confirm";
+			break;
+	}
+
+	broadcastState();
 }
 
 function getWorkspaceRoot(): string | null {
@@ -296,6 +351,7 @@ function broadcastState() {
 			isListening: state.isListening,
 			lastVerifiedCommand: state.lastVerifiedCommand,
 			repoContext: state.repoContext,
+			voice: state.voice,
 		});
 	}
 }
@@ -344,6 +400,15 @@ function setupWebview(context: vscode.ExtensionContext) {
 				case "refreshRepoContext":
 					await vscode.commands.executeCommand("gitty.refreshRepoContext");
 					break;
+				case "voiceStart":
+					vscode.commands.executeCommand("gitty.voiceStart");
+					break;
+				case "voiceStop":
+					vscode.commands.executeCommand("gitty.voiceStop");
+					break;
+				case "simulateWakeWord":
+					vscode.commands.executeCommand("gitty.simulateWakeWord");
+					break;
 			}
 		},
 		undefined,
@@ -375,6 +440,11 @@ function getWebviewContent(initialState: GittyState) {
 			? ctx.statusPorcelain.substring(0, 2000) + "..."
 			: ctx.statusPorcelain
 		: "";
+
+	// Voice formatting
+	const vState = initialState.voice.state;
+	const vWake = initialState.voice.lastWakeAtIso ?? "-";
+	const vText = initialState.voice.lastHeardText ?? "-";
 
 	return `<!DOCTYPE html>
 <html lang="en">
@@ -408,6 +478,10 @@ function getWebviewContent(initialState: GittyState) {
             border-top: 1px solid var(--vscode-panel-border);
             padding-top: 10px;
         }
+        .voice-section {
+            border-top: 1px solid var(--vscode-panel-border);
+            padding-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -421,6 +495,16 @@ function getWebviewContent(initialState: GittyState) {
         <button id="run-verified-btn">Run Verified Command...</button>
         <button id="run-last-btn">Run Last Command Again</button>
         <p id="last-command-text">Last command: ${lastCommandLabel}</p>
+    </div>
+
+    <div class="voice-section">
+        <h2>Voice Control</h2>
+        <p><strong>Status:</strong> <span id="v-state">${vState}</span></p>
+        <p><strong>Last Wake:</strong> <span id="v-wake">${vWake}</span></p>
+        <p><strong>Last Heard:</strong> <span id="v-heard">${vText}</span></p>
+        <button id="v-start-btn">Start Voice</button>
+        <button id="v-stop-btn">Stop Voice</button>
+        <button id="v-sim-btn">Simulate Wake Word</button>
     </div>
 
     <div class="context-section">
@@ -443,6 +527,11 @@ function getWebviewContent(initialState: GittyState) {
         const ctxClean = document.getElementById('ctx-clean');
         const ctxPorcelain = document.getElementById('ctx-porcelain');
 
+        // Voice elements
+        const vStateEl = document.getElementById('v-state');
+        const vWakeEl = document.getElementById('v-wake');
+        const vHeardEl = document.getElementById('v-heard');
+
         // Buttons
         document.getElementById('toggle-btn').addEventListener('click', () => {
             vscode.postMessage({ command: 'toggle' });
@@ -458,6 +547,15 @@ function getWebviewContent(initialState: GittyState) {
         });
         document.getElementById('refresh-ctx-btn').addEventListener('click', () => {
              vscode.postMessage({ command: 'refreshRepoContext' });
+        });
+        document.getElementById('v-start-btn').addEventListener('click', () => {
+             vscode.postMessage({ command: 'voiceStart' });
+        });
+        document.getElementById('v-stop-btn').addEventListener('click', () => {
+             vscode.postMessage({ command: 'voiceStop' });
+        });
+        document.getElementById('v-sim-btn').addEventListener('click', () => {
+             vscode.postMessage({ command: 'simulateWakeWord' });
         });
 
         // Handle messages from extension
@@ -481,6 +579,14 @@ function getWebviewContent(initialState: GittyState) {
                         let p = ctx.statusPorcelain || '';
                         if (p.length > 2000) p = p.substring(0, 2000) + '...';
                         ctxPorcelain.textContent = p;
+                    }
+
+                    // voice updates
+                    const voice = message.voice;
+                    if (voice) {
+                        vStateEl.textContent = voice.state;
+                        vWakeEl.textContent = voice.lastWakeAtIso || '-';
+                        vHeardEl.textContent = voice.lastHeardText || '-';
                     }
                     break;
             }

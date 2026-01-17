@@ -17,7 +17,10 @@
     "onCommand:gitty.debugRunGitStatus",
     "onCommand:gitty.runCommandVerified",
     "onCommand:gitty.runLastCommandAgain",
-    "onCommand:gitty.refreshRepoContext"
+    "onCommand:gitty.refreshRepoContext",
+    "onCommand:gitty.voiceStart",
+    "onCommand:gitty.voiceStop",
+    "onCommand:gitty.simulateWakeWord"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -53,6 +56,18 @@
       {
         "command": "gitty.refreshRepoContext",
         "title": "Gitty: Refresh Repo Context"
+      },
+      {
+        "command": "gitty.voiceStart",
+        "title": "Gitty: Start Voice (Wake Listening)"
+      },
+      {
+        "command": "gitty.voiceStop",
+        "title": "Gitty: Stop Voice"
+      },
+      {
+        "command": "gitty.simulateWakeWord",
+        "title": "Gitty: Simulate Wake Word"
       }
     ]
   },
