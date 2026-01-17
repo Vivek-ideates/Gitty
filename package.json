@@ -13,7 +13,8 @@
     "onCommand:gitty.openCoach",
     "onCommand:gitty.toggleListening",
     "onCommand:gitty.spawnTerminal",
-    "onCommand:gitty.sendTextToTerminal"
+    "onCommand:gitty.sendTextToTerminal",
+    "onCommand:gitty.debugRunGitStatus"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -33,6 +34,10 @@
       {
         "command": "gitty.sendTextToTerminal",
         "title": "Gitty: Send Text to Terminal"
+      },
+      {
+        "command": "gitty.debugRunGitStatus",
+        "title": "Gitty: Debug Run (git status)"
       }
     ]
   },

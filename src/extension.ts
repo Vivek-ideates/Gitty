@@ -1,13 +1,16 @@
 import * as vscode from "vscode";
 import { TerminalManager } from "./terminalManager";
+import { verifyAndRunCaptured } from "./commandExecutor";
 
 let isListening = false;
 let statusBarItem: vscode.StatusBarItem;
 let currentPanel: vscode.WebviewPanel | undefined = undefined;
 let terminalManager: TerminalManager;
+let outputChannel: vscode.OutputChannel;
 
 export function activate(context: vscode.ExtensionContext) {
 	terminalManager = new TerminalManager();
+	outputChannel = vscode.window.createOutputChannel("Gitty");
 
 	// Command: Toggle Listening
 	const toggleCommand = vscode.commands.registerCommand(
@@ -46,7 +49,46 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 		},
 	);
+	// Command: Debug Run (git status)
+	const debugRunCommand = vscode.commands.registerCommand(
+		"gitty.debugRunGitStatus",
+		async () => {
+			if (
+				!vscode.workspace.workspaceFolders ||
+				vscode.workspace.workspaceFolders.length === 0
+			) {
+				vscode.window.showErrorMessage("No workspace folder open.");
+				return;
+			}
+			const cwd = vscode.workspace.workspaceFolders[0].uri.fsPath;
 
+			await verifyAndRunCaptured(
+				"git status",
+				{ cwd },
+				{
+					confirmLow: async (msg) => {
+						const selected = await vscode.window.showInformationMessage(
+							msg,
+							{ modal: true },
+							"Run",
+							"Cancel",
+						);
+						return selected === "Run";
+					},
+					confirmHigh: async (msg) => {
+						const selected = await vscode.window.showWarningMessage(
+							msg,
+							{ modal: true },
+							"Continue",
+							"Cancel",
+						);
+						return selected === "Continue";
+					},
+				},
+				outputChannel,
+			);
+		},
+	);
 	// Status Bar
 	statusBarItem = vscode.window.createStatusBarItem(
 		vscode.StatusBarAlignment.Left,
@@ -61,7 +103,9 @@ export function activate(context: vscode.ExtensionContext) {
 		openCoachCommand,
 		spawnTerminalCommand,
 		sendTextCommand,
+		debugRunCommand,
 		statusBarItem,
+		outputChannel,
 	);
 }
 
