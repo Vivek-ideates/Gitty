@@ -1,10 +1,14 @@
 import * as vscode from "vscode";
+import { TerminalManager } from "./terminalManager";
 
 let isListening = false;
 let statusBarItem: vscode.StatusBarItem;
 let currentPanel: vscode.WebviewPanel | undefined = undefined;
+let terminalManager: TerminalManager;
 
 export function activate(context: vscode.ExtensionContext) {
+	terminalManager = new TerminalManager();
+
 	// Command: Toggle Listening
 	const toggleCommand = vscode.commands.registerCommand(
 		"gitty.toggleListening",
@@ -21,6 +25,28 @@ export function activate(context: vscode.ExtensionContext) {
 		},
 	);
 
+	// Command: Spawn Terminal
+	const spawnTerminalCommand = vscode.commands.registerCommand(
+		"gitty.spawnTerminal",
+		() => {
+			terminalManager.show();
+		},
+	);
+
+	// Command: Send Text to Terminal
+	const sendTextCommand = vscode.commands.registerCommand(
+		"gitty.sendTextToTerminal",
+		async () => {
+			const text = await vscode.window.showInputBox({
+				prompt: "Text to send to Gitty terminal",
+			});
+			if (text) {
+				terminalManager.show();
+				terminalManager.sendText(text);
+			}
+		},
+	);
+
 	// Status Bar
 	statusBarItem = vscode.window.createStatusBarItem(
 		vscode.StatusBarAlignment.Left,
@@ -30,7 +56,13 @@ export function activate(context: vscode.ExtensionContext) {
 	statusBarItem.text = "Gitty: Idle";
 	statusBarItem.show();
 
-	context.subscriptions.push(toggleCommand, openCoachCommand, statusBarItem);
+	context.subscriptions.push(
+		toggleCommand,
+		openCoachCommand,
+		spawnTerminalCommand,
+		sendTextCommand,
+		statusBarItem,
+	);
 }
 
 function toggleListening() {
@@ -73,7 +105,10 @@ function setupWebview(context: vscode.ExtensionContext) {
 			switch (message.command) {
 				case "toggle":
 					toggleListening();
-					return;
+					break;
+				case "showTerminal":
+					vscode.commands.executeCommand("gitty.spawnTerminal");
+					break;
 			}
 		},
 		undefined,
@@ -118,15 +153,21 @@ function getWebviewContent(initialState: boolean) {
     <h1>Gitty Coach (MVP)</h1>
     <p id="status-text">State: ${stateLabel}</p>
     <button id="toggle-btn">Toggle Listening</button>
+    <button id="terminal-btn">Show Terminal</button>
 
     <script>
         const vscode = acquireVsCodeApi();
         const statusText = document.getElementById('status-text');
         const btn = document.getElementById('toggle-btn');
+        const termBtn = document.getElementById('terminal-btn');
 
         // Handle button click
         btn.addEventListener('click', () => {
             vscode.postMessage({ command: 'toggle' });
+        });
+
+        termBtn.addEventListener('click', () => {
+            vscode.postMessage({ command: 'showTerminal' });
         });
 
         // Handle messages from extension

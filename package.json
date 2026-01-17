@@ -11,7 +11,9 @@
   ],
   "activationEvents": [
     "onCommand:gitty.openCoach",
-    "onCommand:gitty.toggleListening"
+    "onCommand:gitty.toggleListening",
+    "onCommand:gitty.spawnTerminal",
+    "onCommand:gitty.sendTextToTerminal"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -23,6 +25,14 @@
       {
         "command": "gitty.toggleListening",
         "title": "Gitty: Toggle Listening"
+      },
+      {
+        "command": "gitty.spawnTerminal",
+        "title": "Gitty: Spawn Terminal"
+      },
+      {
+        "command": "gitty.sendTextToTerminal",
+        "title": "Gitty: Send Text to Terminal"
       }
     ]
   },
