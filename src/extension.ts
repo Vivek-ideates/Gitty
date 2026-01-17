@@ -7,6 +7,7 @@ let statusBarItem: vscode.StatusBarItem;
 let currentPanel: vscode.WebviewPanel | undefined = undefined;
 let terminalManager: TerminalManager;
 let outputChannel: vscode.OutputChannel;
+let lastVerifiedCommand: string | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
 	terminalManager = new TerminalManager();
@@ -49,6 +50,109 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 		},
 	);
+	// Command: Run Command (Verified)
+	const runCommandVerified = vscode.commands.registerCommand(
+		"gitty.runCommandVerified",
+		async () => {
+			if (
+				!vscode.workspace.workspaceFolders ||
+				vscode.workspace.workspaceFolders.length === 0
+			) {
+				vscode.window.showErrorMessage("No workspace folder open.");
+				return;
+			}
+			const cwd = vscode.workspace.workspaceFolders[0].uri.fsPath;
+
+			const commandText = await vscode.window.showInputBox({
+				prompt: "Command to run (verified) [temporary text input]",
+				placeHolder: "Example: git status",
+				ignoreFocusOut: true,
+			});
+
+			if (!commandText) {
+				return;
+			}
+
+			const result = await verifyAndRunCaptured(
+				commandText,
+				{ cwd },
+				{
+					confirmLow: async (msg) => {
+						const selected = await vscode.window.showInformationMessage(
+							msg,
+							{ modal: true },
+							"Run",
+							"Cancel",
+						);
+						return selected === "Run";
+					},
+					confirmHigh: async (msg) => {
+						const selected = await vscode.window.showWarningMessage(
+							msg,
+							{ modal: true },
+							"Continue",
+							"Cancel",
+						);
+						return selected === "Continue";
+					},
+				},
+				outputChannel,
+			);
+
+			if (result !== null) {
+				lastVerifiedCommand = commandText;
+			}
+		},
+	);
+
+	// Command: Run Last Command Again
+	const runLastCommandAgain = vscode.commands.registerCommand(
+		"gitty.runLastCommandAgain",
+		async () => {
+			if (!lastVerifiedCommand) {
+				vscode.window.showInformationMessage(
+					"No previous verified command yet.",
+				);
+				return;
+			}
+
+			if (
+				!vscode.workspace.workspaceFolders ||
+				vscode.workspace.workspaceFolders.length === 0
+			) {
+				vscode.window.showErrorMessage("No workspace folder open.");
+				return;
+			}
+			const cwd = vscode.workspace.workspaceFolders[0].uri.fsPath;
+
+			await verifyAndRunCaptured(
+				lastVerifiedCommand,
+				{ cwd },
+				{
+					confirmLow: async (msg) => {
+						const selected = await vscode.window.showInformationMessage(
+							msg,
+							{ modal: true },
+							"Run",
+							"Cancel",
+						);
+						return selected === "Run";
+					},
+					confirmHigh: async (msg) => {
+						const selected = await vscode.window.showWarningMessage(
+							msg,
+							{ modal: true },
+							"Continue",
+							"Cancel",
+						);
+						return selected === "Continue";
+					},
+				},
+				outputChannel,
+			);
+		},
+	);
+
 	// Command: Debug Run (git status)
 	const debugRunCommand = vscode.commands.registerCommand(
 		"gitty.debugRunGitStatus",
@@ -103,6 +207,8 @@ export function activate(context: vscode.ExtensionContext) {
 		openCoachCommand,
 		spawnTerminalCommand,
 		sendTextCommand,
+		runCommandVerified,
+		runLastCommandAgain,
 		debugRunCommand,
 		statusBarItem,
 		outputChannel,

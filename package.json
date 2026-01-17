@@ -14,7 +14,9 @@
     "onCommand:gitty.toggleListening",
     "onCommand:gitty.spawnTerminal",
     "onCommand:gitty.sendTextToTerminal",
-    "onCommand:gitty.debugRunGitStatus"
+    "onCommand:gitty.debugRunGitStatus",
+    "onCommand:gitty.runCommandVerified",
+    "onCommand:gitty.runLastCommandAgain"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -38,6 +40,14 @@
       {
         "command": "gitty.debugRunGitStatus",
         "title": "Gitty: Debug Run (git status)"
+      },
+      {
+        "command": "gitty.runCommandVerified",
+        "title": "Gitty: Run Command (Verified)"
+      },
+      {
+        "command": "gitty.runLastCommandAgain",
+        "title": "Gitty: Run Last Command Again (Verified)"
       }
     ]
   },
