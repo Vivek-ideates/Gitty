@@ -7,6 +7,9 @@ import {
 import { getRepoContext, RepoContext } from "./repoContext";
 import { VoiceController, VoiceSnapshot } from "./voiceController";
 import { GittyConfig, readConfig } from "./config";
+import { WakeWordService } from "./wakeWordService";
+import * as path from "path";
+import * as fs from "fs";
 
 interface GittyState {
 	isListening: boolean;
@@ -29,6 +32,7 @@ let currentPanel: vscode.WebviewPanel | undefined = undefined;
 let terminalManager: TerminalManager;
 let outputChannel: vscode.OutputChannel;
 let voiceController: VoiceController;
+let wakeWordService: WakeWordService | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
 	terminalManager = new TerminalManager();
@@ -260,18 +264,69 @@ export function activate(context: vscode.ExtensionContext) {
 	// Command: Voice Start
 	const voiceStartCommand = vscode.commands.registerCommand(
 		"gitty.voiceStart",
-		() => {
+		async () => {
+			const cfg = readConfig();
+			if (!cfg.voiceEnabled) {
+				vscode.window.showInformationMessage(
+					"Enable gitty.voice.enabled to use wake word",
+				);
+				return;
+			}
+			if (!cfg.picovoiceAccessKey) {
+				vscode.window.showErrorMessage("Set gitty.picovoice.accessKey in Settings");
+				return;
+			}
+
+			// Start Voice Controller state
 			voiceController.startWakeListening();
 			// Best effort context refresh
 			vscode.commands.executeCommand("gitty.refreshRepoContext");
+
+			// Start Wake Word Service
+			if (!wakeWordService || !wakeWordService.isRunning) {
+				try {
+					const keywordPath = resolveKeywordPath(context);
+					if (!keywordPath) {
+						return; // Error already shown
+					}
+
+					wakeWordService = new WakeWordService({
+						accessKey: cfg.picovoiceAccessKey,
+						keywordPath: keywordPath,
+						sensitivity: cfg.porcupineSensitivity,
+						log: (line) => outputChannel.appendLine(line),
+						onWakeWord: () => {
+							// 1. Focus Coach
+							vscode.commands.executeCommand("gitty.openCoach");
+							// 2. Simulate Wake Word (transition state)
+							voiceController.simulateWakeWord();
+						},
+					});
+
+					await wakeWordService.start();
+					outputChannel.appendLine("[Gitty] Wake word service started.");
+				} catch (err: any) {
+					vscode.window.showErrorMessage(
+						`Failed to start wake word: ${err.message}`,
+					);
+					outputChannel.appendLine(`[Gitty] Wake word error: ${err.message}`);
+				}
+			}
+			broadcastState();
 		},
 	);
 
 	// Command: Voice Stop
 	const voiceStopCommand = vscode.commands.registerCommand(
 		"gitty.voiceStop",
-		() => {
+		async () => {
 			voiceController.stop();
+			if (wakeWordService) {
+				await wakeWordService.stop();
+				wakeWordService = undefined;
+				outputChannel.appendLine("[Gitty] Wake word service stopped.");
+			}
+			broadcastState();
 		},
 	);
 
@@ -379,8 +434,25 @@ function broadcastState() {
 			repoContext: state.repoContext,
 			voice: state.voice,
 			config: state.config,
+			wakeWordRunning: wakeWordService ? wakeWordService.isRunning : false,
 		});
 	}
+}
+
+function resolveKeywordPath(context: vscode.ExtensionContext): string | null {
+	// e.g. resources/porcupine/hey-gitty.ppn
+	// For user customization we might want to allow this to be a path in config,
+	// but for MVP we look in extension resources
+	const relative = "resources/porcupine/hey-gitty.ppn";
+	const absPath = context.asAbsolutePath(relative);
+
+	if (!fs.existsSync(absPath)) {
+		vscode.window.showErrorMessage(
+			`Wake word file not found at: ${absPath}. Please add it to enable wake word.`,
+		);
+		return null;
+	}
+	return absPath;
 }
 
 function setupWebview(context: vscode.ExtensionContext) {
@@ -466,6 +538,8 @@ function setupWebview(context: vscode.ExtensionContext) {
 function getWebviewContent(initialState: GittyState) {
 	const stateLabel = initialState.isListening ? "Listening" : "Idle";
 	const lastCommandLabel = initialState.lastVerifiedCommand ?? "(none)";
+	const wwStatus =
+		wakeWordService && wakeWordService.isRunning ? "Running" : "Stopped";
 
 	// Context formatting
 	const ctx = initialState.repoContext;
@@ -554,6 +628,7 @@ function getWebviewContent(initialState: GittyState) {
 
     <div class="voice-section">
         <h2>Voice Control</h2>
+        <p><strong>Wake Engine:</strong> <span id="v-ww-status">${wwStatus}</span></p>
         <p><strong>Status:</strong> <span id="v-state">${vState}</span></p>
         <p><strong>Last Wake:</strong> <span id="v-wake">${vWake}</span></p>
         <p><strong>Last Heard:</strong> <span id="v-heard">${vText}</span></p>
@@ -595,6 +670,7 @@ function getWebviewContent(initialState: GittyState) {
         const ctxPorcelain = document.getElementById('ctx-porcelain');
 
         // Voice elements
+        const vWwStatus = document.getElementById('v-ww-status');
         const vStateEl = document.getElementById('v-state');
         const vWakeEl = document.getElementById('v-wake');
         const vHeardEl = document.getElementById('v-heard');
@@ -665,6 +741,9 @@ function getWebviewContent(initialState: GittyState) {
                         vStateEl.textContent = voice.state;
                         vWakeEl.textContent = voice.lastWakeAtIso || '-';
                         vHeardEl.textContent = voice.lastHeardText || '-';
+                    }
+                    if (message.wakeWordRunning !== undefined) {
+                        vWwStatus.textContent = message.wakeWordRunning ? 'Running' : 'Stopped';
                     }
 
                      // config updates
