@@ -69,7 +69,59 @@
         "command": "gitty.simulateWakeWord",
         "title": "Gitty: Simulate Wake Word"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Gitty",
+      "properties": {
+        "gitty.voice.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Gitty voice features (wake word + STT)."
+        },
+        "gitty.voice.wakeWord": {
+          "type": "string",
+          "default": "Hey Gitty",
+          "description": "Wake word phrase (informational; Porcupine keyword is configured separately)."
+        },
+        "gitty.picovoice.accessKey": {
+          "type": "string",
+          "default": "",
+          "description": "Picovoice AccessKey for Porcupine wake word detection."
+        },
+        "gitty.picovoice.keyword": {
+          "type": "string",
+          "default": "hey-gitty",
+          "description": "Porcupine keyword model name/identifier to use (implementation will map this later)."
+        },
+        "gitty.picovoice.sensitivity": {
+          "type": "number",
+          "default": 0.6,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Wake word sensitivity (0-1)."
+        },
+        "gitty.vosk.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Vosk speech-to-text (local)."
+        },
+        "gitty.groq.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Groq LLM command planning."
+        },
+        "gitty.groq.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Groq API key (placeholder)."
+        },
+        "gitty.groq.model": {
+          "type": "string",
+          "default": "",
+          "description": "Groq model name (placeholder)."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

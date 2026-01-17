@@ -6,12 +6,14 @@ import {
 } from "./commandExecutor";
 import { getRepoContext, RepoContext } from "./repoContext";
 import { VoiceController, VoiceSnapshot } from "./voiceController";
+import { GittyConfig, readConfig } from "./config";
 
 interface GittyState {
 	isListening: boolean;
 	lastVerifiedCommand: string | undefined;
 	repoContext: RepoContext | undefined;
 	voice: VoiceSnapshot;
+	config: GittyConfig;
 }
 
 const state: GittyState = {
@@ -19,6 +21,7 @@ const state: GittyState = {
 	lastVerifiedCommand: undefined,
 	repoContext: undefined,
 	voice: { state: "off" },
+	config: readConfig(),
 };
 
 let statusBarItem: vscode.StatusBarItem;
@@ -35,6 +38,15 @@ export function activate(context: vscode.ExtensionContext) {
 	voiceController = new VoiceController((snap) => {
 		onVoiceChange(snap);
 	});
+
+	// Config Listener
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeConfiguration((e) => {
+			if (e.affectsConfiguration("gitty")) {
+				refreshConfig();
+			}
+		}),
+	);
 
 	// Command: Toggle Listening
 	const toggleCommand = vscode.commands.registerCommand(
@@ -246,22 +258,31 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 
 	// Command: Voice Start
-	const voiceStartCommand = vscode.commands.registerCommand("gitty.voiceStart", () => {
-		voiceController.startWakeListening();
-		// Best effort context refresh
-		vscode.commands.executeCommand("gitty.refreshRepoContext");
-	});
+	const voiceStartCommand = vscode.commands.registerCommand(
+		"gitty.voiceStart",
+		() => {
+			voiceController.startWakeListening();
+			// Best effort context refresh
+			vscode.commands.executeCommand("gitty.refreshRepoContext");
+		},
+	);
 
 	// Command: Voice Stop
-	const voiceStopCommand = vscode.commands.registerCommand("gitty.voiceStop", () => {
-		voiceController.stop();
-	});
+	const voiceStopCommand = vscode.commands.registerCommand(
+		"gitty.voiceStop",
+		() => {
+			voiceController.stop();
+		},
+	);
 
 	// Command: Simulate Wake Word
-	const voiceSimulateCommand = vscode.commands.registerCommand("gitty.simulateWakeWord", () => {
-		voiceController.simulateWakeWord();
-		vscode.commands.executeCommand("gitty.openCoach");
-	});
+	const voiceSimulateCommand = vscode.commands.registerCommand(
+		"gitty.simulateWakeWord",
+		() => {
+			voiceController.simulateWakeWord();
+			vscode.commands.executeCommand("gitty.openCoach");
+		},
+	);
 
 	// Status Bar
 	statusBarItem = vscode.window.createStatusBarItem(
@@ -291,7 +312,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 function onVoiceChange(snap: VoiceSnapshot) {
 	state.voice = snap;
-	
+
 	// Update Status Bar
 	switch (snap.state) {
 		case "off":
@@ -311,6 +332,11 @@ function onVoiceChange(snap: VoiceSnapshot) {
 			break;
 	}
 
+	broadcastState();
+}
+
+function refreshConfig() {
+	state.config = readConfig();
 	broadcastState();
 }
 
@@ -352,6 +378,7 @@ function broadcastState() {
 			lastVerifiedCommand: state.lastVerifiedCommand,
 			repoContext: state.repoContext,
 			voice: state.voice,
+			config: state.config,
 		});
 	}
 }
@@ -409,6 +436,17 @@ function setupWebview(context: vscode.ExtensionContext) {
 				case "simulateWakeWord":
 					vscode.commands.executeCommand("gitty.simulateWakeWord");
 					break;
+				case "openSettings":
+					vscode.commands.executeCommand(
+						"workbench.action.openSettings",
+						"@ext:pauravhparam.gitty", // Assuming publisher.name, or just "gitty" query
+					);
+					// Fallback to simpler search query if extension id lookup is tricky
+					vscode.commands.executeCommand(
+						"workbench.action.openSettings",
+						"gitty",
+					);
+					break;
 			}
 		},
 		undefined,
@@ -446,6 +484,18 @@ function getWebviewContent(initialState: GittyState) {
 	const vWake = initialState.voice.lastWakeAtIso ?? "-";
 	const vText = initialState.voice.lastHeardText ?? "-";
 
+	// Config formatting
+	const {
+		voiceEnabled,
+		wakeWord,
+		picovoiceAccessKey,
+		porcupineKeyword,
+		porcupineSensitivity,
+		groqApiKey,
+	} = initialState.config;
+	const picoKeyStatus = picovoiceAccessKey ? "(set)" : "(not set)";
+	const groqKeyStatus = groqApiKey ? "(set)" : "(not set)";
+
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -482,6 +532,11 @@ function getWebviewContent(initialState: GittyState) {
             border-top: 1px solid var(--vscode-panel-border);
             padding-top: 10px;
         }
+        .config-section {
+            border-top: 1px solid var(--vscode-panel-border);
+            padding-top: 10px;
+            margin-top: 20px;
+        }
     </style>
 </head>
 <body>
@@ -516,6 +571,18 @@ function getWebviewContent(initialState: GittyState) {
         <pre id="ctx-porcelain">${porcelain}</pre>
     </div>
 
+    <div class="config-section">
+        <h2>Config</h2>
+        <button id="config-btn">Open Gitty Settings</button>
+        <p><strong>Voice Enabled:</strong> <span id="cfg-voice-enabled">${voiceEnabled}</span></p>
+        <p><strong>Wake Word:</strong> <span id="cfg-wake-word">${wakeWord}</span></p>
+        <p><strong>Porcupine Keyword:</strong> <span id="cfg-pico-keyword">${porcupineKeyword}</span></p>
+        <p><strong>Sensitivity:</strong> <span id="cfg-pico-sens">${porcupineSensitivity}</span></p>
+        <p><strong>Picovoice AccessKey:</strong> <span id="cfg-pico-key">${picoKeyStatus}</span></p>
+        <p><strong>Groq API Key:</strong> <span id="cfg-groq-key">${groqKeyStatus}</span></p>
+        <p><em>Keys are hidden. Set them in Settings.</em></p>
+    </div>
+
     <script>
         const vscode = acquireVsCodeApi();
         const statusText = document.getElementById('status-text');
@@ -531,6 +598,14 @@ function getWebviewContent(initialState: GittyState) {
         const vStateEl = document.getElementById('v-state');
         const vWakeEl = document.getElementById('v-wake');
         const vHeardEl = document.getElementById('v-heard');
+
+        // Config elements
+        const cfgVoiceEnabled = document.getElementById('cfg-voice-enabled');
+        const cfgWakeWord = document.getElementById('cfg-wake-word');
+        const cfgPicoKeyword = document.getElementById('cfg-pico-keyword');
+        const cfgPicoSens = document.getElementById('cfg-pico-sens');
+        const cfgPicoKey = document.getElementById('cfg-pico-key');
+        const cfgGroqKey = document.getElementById('cfg-groq-key');
 
         // Buttons
         document.getElementById('toggle-btn').addEventListener('click', () => {
@@ -556,6 +631,9 @@ function getWebviewContent(initialState: GittyState) {
         });
         document.getElementById('v-sim-btn').addEventListener('click', () => {
              vscode.postMessage({ command: 'simulateWakeWord' });
+        });
+        document.getElementById('config-btn').addEventListener('click', () => {
+             vscode.postMessage({ command: 'openSettings' });
         });
 
         // Handle messages from extension
@@ -587,6 +665,17 @@ function getWebviewContent(initialState: GittyState) {
                         vStateEl.textContent = voice.state;
                         vWakeEl.textContent = voice.lastWakeAtIso || '-';
                         vHeardEl.textContent = voice.lastHeardText || '-';
+                    }
+
+                     // config updates
+                    const config = message.config;
+                    if (config) {
+                        cfgVoiceEnabled.textContent = config.voiceEnabled;
+                        cfgWakeWord.textContent = config.wakeWord;
+                        cfgPicoKeyword.textContent = config.porcupineKeyword;
+                        cfgPicoSens.textContent = config.porcupineSensitivity;
+                        cfgPicoKey.textContent = config.picovoiceAccessKey ? '(set)' : '(not set)';
+                        cfgGroqKey.textContent = config.groqApiKey ? '(set)' : '(not set)';
                     }
                     break;
             }
