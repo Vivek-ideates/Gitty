@@ -10,6 +10,10 @@ export interface GittyConfig {
 	groqEnabled: boolean;
 	groqApiKey: string;
 	groqModel: string;
+	elevenLabsEnabled: boolean;
+	elevenLabsVoiceId: string;
+	elevenLabsModelId: string;
+	elevenLabsOutputFormat: string;
 }
 
 export function readConfig(): GittyConfig {
@@ -33,6 +37,11 @@ export function readConfig(): GittyConfig {
 	const groqApiKey = cfg.get<string>("groq.apiKey", "");
 	const groqModel = cfg.get<string>("groq.model", "");
 
+	const elevenLabsEnabled = cfg.get<boolean>("elevenlabs.enabled", false);
+	const elevenLabsVoiceId = cfg.get<string>("elevenlabs.voiceId", "");
+	const elevenLabsModelId = cfg.get<string>("elevenlabs.modelId", "eleven_turbo_v2_5");
+	const elevenLabsOutputFormat = cfg.get<string>("elevenlabs.outputFormat", "mp3_22050_32");
+
 	return {
 		voiceEnabled,
 		wakeWord,
@@ -43,5 +52,9 @@ export function readConfig(): GittyConfig {
 		groqEnabled,
 		groqApiKey,
 		groqModel,
+		elevenLabsEnabled,
+		elevenLabsVoiceId,
+		elevenLabsModelId,
+		elevenLabsOutputFormat,
 	};
 }

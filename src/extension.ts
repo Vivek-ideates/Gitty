@@ -13,6 +13,7 @@ import * as fs from "fs";
 import { spawn } from "child_process";
 import { groqChatComplete } from "./groqClient";
 import { CommandPlan, Risk } from "./planTypes";
+import { speakText } from "./ttsService";
 
 interface GittyState {
 	isListening: boolean;
@@ -360,9 +361,25 @@ export function activate(context: vscode.ExtensionContext) {
 	const planAndExecuteCommand = vscode.commands.registerCommand(
 		"gitty.planAndExecuteFromTranscript",
 		async () => {
-			await planFromTranscriptInternal();
+			await planFromTranscriptInternal(context);
 			if (state.lastPlan) {
 				await vscode.commands.executeCommand("gitty.executeLastPlan");
+			}
+		},
+	);
+
+	// Command: Set ElevenLabs API Key
+	const setElevenLabsApiKeyCommand = vscode.commands.registerCommand(
+		"gitty.setElevenLabsApiKey",
+		async () => {
+			const output = await vscode.window.showInputBox({
+				prompt: "Enter ElevenLabs API key",
+				password: true,
+				ignoreFocusOut: true,
+			});
+			if (output) {
+				await context.secrets.store("gitty.elevenlabs.apiKey", output);
+				vscode.window.showInformationMessage("ElevenLabs API key saved.");
 			}
 		},
 	);
@@ -384,6 +401,7 @@ export function activate(context: vscode.ExtensionContext) {
 		planAndExecuteCommand,
 		voiceStartCommand,
 		voiceStopCommand,
+		setElevenLabsApiKeyCommand,
 		statusBarItem,
 		outputChannel,
 	);
@@ -870,7 +888,7 @@ async function runStt(
 	});
 }
 
-async function planFromTranscriptInternal() {
+async function planFromTranscriptInternal(context: vscode.ExtensionContext) {
 	const cfg = readConfig();
 	if (!cfg.groqEnabled) {
 		vscode.window.showErrorMessage("Gitty: Groq is disabled in settings.");
@@ -918,7 +936,7 @@ Produce a JSON object with this shape:
 {
   "command": "string",
   "risk": "low" | "medium" | "high",
-  "explanation": "string (max 1 sentence)"
+  "explanation": "string (2 sentences)"
 }`,
 				},
 				{
@@ -934,11 +952,12 @@ Constraints:
 3. If intent is ambiguous or dangerous, set risk="high" or choose a read-only command like "git status".
 4. If checking status/diff, set risk="low".
 5. If modifying history (rebase, reset --hard), set risk="high".
+6. Explanation should be 1-2 sentences, narrative style. This is spoken back to the user.
 6. Return ONLY the JSON object.`,
 				},
 			],
 			temperature: 0.2,
-			maxTokens: 250,
+			maxTokens: 280,
 		});
 
 		outputChannel.appendLine(`[Gitty] Raw Plan JSON: ${response}`);
@@ -981,6 +1000,27 @@ Constraints:
 		vscode.window.showInformationMessage(`Planned: ${shortCmd}`);
 
 		broadcastState();
+
+		// TTS: Speak explanation
+		try {
+			const elevenCfg = state.config;
+			const apiKey = await context.secrets.get("gitty.elevenlabs.apiKey");
+			if (
+				elevenCfg.elevenLabsEnabled &&
+				apiKey &&
+				elevenCfg.elevenLabsVoiceId
+			) {
+				const textToSpeak =
+					plan.explanation || "Here is what I propose to run.";
+				await speakText(context, textToSpeak, {
+					voiceId: elevenCfg.elevenLabsVoiceId,
+					modelId: elevenCfg.elevenLabsModelId,
+					outputFormat: elevenCfg.elevenLabsOutputFormat,
+				});
+			}
+		} catch (ttsErr: any) {
+			outputChannel.appendLine(`[Gitty] TTS Error: ${ttsErr.message}`);
+		}
 	} catch (e: any) {
 		outputChannel.appendLine(`[Gitty] Planning Error: ${e.message}`);
 		vscode.window.showErrorMessage("Failed to plan command. See Output.");
@@ -988,3 +1028,9 @@ Constraints:
 }
 
 export function deactivate() {}
+
+export async function getElevenLabsApiKey(
+	context: vscode.ExtensionContext,
+): Promise<string | undefined> {
+	return context.secrets.get("gitty.elevenlabs.apiKey");
+}

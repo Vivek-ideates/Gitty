@@ -14,6 +14,7 @@
     "onCommand:gitty.refreshRepoContext",
     "onCommand:gitty.voiceStart",
     "onCommand:gitty.voiceStop",
+    "onCommand:gitty.setElevenLabsApiKey",
     "onCommand:gitty.groqPing",
     "onCommand:gitty.executeLastPlan",
     "onCommand:gitty.planAndExecuteFromTranscript"
@@ -21,6 +22,10 @@
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "gitty.setElevenLabsApiKey",
+        "title": "Gitty: Set ElevenLabs API Key"
+      },
       {
         "command": "gitty.planAndExecuteFromTranscript",
         "title": "Gitty: Plan + Execute From Last Transcript (Groq)"
@@ -99,6 +104,26 @@
           "type": "string",
           "default": "",
           "description": "Groq model name (placeholder)."
+        },
+        "gitty.elevenlabs.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable ElevenLabs TTS."
+        },
+        "gitty.elevenlabs.voiceId": {
+          "type": "string",
+          "default": "",
+          "description": "ElevenLabs Voice ID."
+        },
+        "gitty.elevenlabs.modelId": {
+          "type": "string",
+          "default": "eleven_turbo_v2_5",
+          "description": "ElevenLabs Model ID (default: eleven_turbo_v2_5)."
+        },
+        "gitty.elevenlabs.outputFormat": {
+          "type": "string",
+          "default": "mp3_22050_32",
+          "description": "ElevenLabs Output Format (default: mp3_22050_32)."
         }
       }
     }
