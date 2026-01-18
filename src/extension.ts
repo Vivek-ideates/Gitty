@@ -13,7 +13,7 @@ import * as fs from "fs";
 import { spawn } from "child_process";
 import { groqChatComplete } from "./groqClient";
 import { CommandPlan, Risk } from "./planTypes";
-import { speakText } from "./ttsService";
+import { speakText, stopSpeaking } from "./ttsService";
 
 interface GittyState {
 	isListening: boolean;
@@ -159,6 +159,9 @@ export function activate(context: vscode.ExtensionContext) {
 						sensitivity: cfg.porcupineSensitivity,
 						log: (line) => outputChannel.appendLine(line),
 						onWakeWord: async () => {
+							// Stop any ongoing TTS
+							stopSpeaking();
+
 							if (sttInProgress) {
 								return;
 							}
@@ -432,13 +435,6 @@ async function runCaptured(cmd: string, cwd: string) {
 	return runShellCommandCaptured(cmd, { cwd }); // uses default timeout
 }
 
-async function toggleListening() {
-	updateListeningState(!state.isListening);
-	if (state.isListening) {
-		await vscode.commands.executeCommand("gitty.refreshRepoContext");
-	}
-}
-
 function updateListeningState(listening: boolean) {
 	state.isListening = listening;
 
@@ -567,6 +563,7 @@ function getWebviewContent(_initialState: GittyState) {
         }
 
         .card {
+            position: relative;
             background: rgba(25, 25, 30, 0.85);
             border-radius: 16px;
             box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
@@ -579,6 +576,25 @@ function getWebviewContent(_initialState: GittyState) {
             display: flex;
             flex-direction: column;
             gap: 20px;
+        }
+
+        .settings-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: none;
+            border: none;
+            padding: 5px;
+            cursor: pointer;
+            color: #666;
+            transition: color 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .settings-btn:hover {
+            color: #ccc;
         }
 
         h1 {
@@ -723,6 +739,12 @@ function getWebviewContent(_initialState: GittyState) {
 </head>
 <body>
     <div class="card">
+        <button id="btn-settings" class="settings-btn" title="Open Settings">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+        </button>
         <h1>Say "Hey Gitty" to start</h1>
         <div class="status-line" id="status-text">Idle</div>
 
@@ -786,6 +808,9 @@ function getWebviewContent(_initialState: GittyState) {
         });
         document.getElementById('btn-stop').addEventListener('click', () => {
              vscode.postMessage({ command: 'voiceStop' });
+        });
+        document.getElementById('btn-settings').addEventListener('click', () => {
+             vscode.postMessage({ command: 'openSettings' });
         });
 
         window.addEventListener('message', event => {

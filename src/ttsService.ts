@@ -2,8 +2,17 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { spawn } from "child_process";
+import { spawn, ChildProcess } from "child_process";
 import { elevenLabsTtsMp3 } from "./elevenlabsTts";
+
+let currentPlaybackProcess: ChildProcess | undefined = undefined;
+
+export function stopSpeaking() {
+	if (currentPlaybackProcess) {
+		currentPlaybackProcess.kill();
+		currentPlaybackProcess = undefined;
+	}
+}
 
 export async function speakText(
 	context: vscode.ExtensionContext,
@@ -66,9 +75,14 @@ export async function speakText(
 		if (os.platform() === "darwin") {
 			await new Promise<void>((resolve) => {
 				const proc = spawn("afplay", [tempFilePath]);
-				proc.on("close", () => resolve());
+				currentPlaybackProcess = proc;
+				proc.on("close", () => {
+					currentPlaybackProcess = undefined;
+					resolve();
+				});
 				proc.on("error", (e) => {
 					channel.appendLine(`[TTS] Playback error: ${e.message}`);
+					currentPlaybackProcess = undefined;
 					resolve();
 				});
 			});
