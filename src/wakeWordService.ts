@@ -56,6 +56,40 @@ export class WakeWordService {
 		}
 	}
 
+	async pause(): Promise<void> {
+		if (!this._isRunning) {
+			return;
+		}
+		this.args.log("[WakeWord] Pausing...");
+		this._isRunning = false; // Will terminate loop
+		if (this.recorder) {
+			try {
+				this.recorder.stop();
+			} catch (e: any) {
+				this.args.log(`[WakeWord] Pause error: ${e.message}`);
+			}
+		}
+	}
+
+	async resume(): Promise<void> {
+		if (this._isRunning) {
+			return;
+		}
+		if (!this.recorder || !this.porcupine) {
+			this.args.log("[WakeWord] Cannot resume: resources released.");
+			return;
+		}
+
+		this.args.log("[WakeWord] Resuming...");
+		try {
+			this.recorder.start();
+			this._isRunning = true;
+			this.loop();
+		} catch (e: any) {
+			this.args.log(`[WakeWord] Resume error: ${e.message}`);
+		}
+	}
+
 	private async loop() {
 		while (this._isRunning && this.recorder && this.porcupine) {
 			try {

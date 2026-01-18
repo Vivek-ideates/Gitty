@@ -163,6 +163,11 @@ export function activate(context: vscode.ExtensionContext) {
 							}
 							sttInProgress = true;
 
+							// PAUSE Wake Word to release microphone
+							if (wakeWordService) {
+								await wakeWordService.pause();
+							}
+
 							// 1. Focus Coach
 							vscode.commands.executeCommand("gitty.openCoach");
 							// 2. Simulate Wake Word (transition state)
@@ -178,6 +183,10 @@ export function activate(context: vscode.ExtensionContext) {
 							} finally {
 								// 4. Return to wake listening
 								voiceController.setBackToWakeListening();
+								// RESUME Wake Word
+								if (wakeWordService) {
+									await wakeWordService.resume();
+								}
 								sttInProgress = false;
 							}
 						},
@@ -300,14 +309,8 @@ export function activate(context: vscode.ExtensionContext) {
 				);
 				confirmed = choice === "Run";
 			} else {
-				// low risk
-				const choice = await vscode.window.showInformationMessage(
-					`[Low Risk] ${message}`,
-					{ modal: true },
-					"Run",
-					"Cancel",
-				);
-				confirmed = choice === "Run";
+				// low risk - Auto run without confirmation for better flow
+				confirmed = true;
 			}
 
 			if (!confirmed) {
@@ -459,6 +462,7 @@ function broadcastState() {
 			voice: state.voice,
 			config: state.config,
 			wakeWordRunning: wakeWordService ? wakeWordService.isRunning : false,
+			lastPlan: state.lastPlan,
 		});
 	}
 }
@@ -515,6 +519,12 @@ function setupWebview(context: vscode.ExtensionContext) {
 				case "voiceStop":
 					vscode.commands.executeCommand("gitty.voiceStop");
 					break;
+				case "executePlan":
+					vscode.commands.executeCommand("gitty.executeLastPlan");
+					break;
+				case "dismissPlan":
+					// No-op in extension for now, webview handles UI
+					break;
 				case "openSettings":
 					vscode.commands.executeCommand(
 						"workbench.action.openSettings",
@@ -542,41 +552,7 @@ function setupWebview(context: vscode.ExtensionContext) {
 	);
 }
 
-function getWebviewContent(initialState: GittyState) {
-	const stateLabel = initialState.isListening ? "Listening" : "Idle";
-	const lastCommandLabel = initialState.lastVerifiedCommand ?? "(none)";
-	const wwStatus =
-		wakeWordService && wakeWordService.isRunning ? "Running" : "Stopped";
-
-	// Context formatting
-	const ctx = initialState.repoContext;
-	const gitRoot = ctx?.gitRoot ?? "(scanning...)";
-	const branch = ctx?.branch ?? "(unknown)";
-	const clean =
-		ctx?.isClean === undefined ? "(unknown)" : ctx.isClean ? "Yes" : "No";
-	const porcelain = ctx?.statusPorcelain
-		? ctx.statusPorcelain.length > 2000
-			? ctx.statusPorcelain.substring(0, 2000) + "..."
-			: ctx.statusPorcelain
-		: "";
-
-	// Voice formatting
-	const vState = initialState.voice.state;
-	const vWake = initialState.voice.lastWakeAtIso ?? "-";
-	const vText = initialState.voice.lastHeardText ?? "-";
-
-	// Config formatting
-	const {
-		voiceEnabled,
-		wakeWord,
-		picovoiceAccessKey,
-		porcupineKeyword,
-		porcupineSensitivity,
-		groqApiKey,
-	} = initialState.config;
-	const picoKeyStatus = picovoiceAccessKey ? "(set)" : "(not set)";
-	const groqKeyStatus = groqApiKey ? "(set)" : "(not set)";
-
+function getWebviewContent(_initialState: GittyState) {
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -584,164 +560,346 @@ function getWebviewContent(initialState: GittyState) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gitty Coach</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; }
-        h1 { font-size: 1.5em; }
-        h2 { font-size: 1.2em; margin-top: 20px; }
-        p { margin-bottom: 20px; }
-        pre { background: var(--vscode-textCodeBlock-background); padding: 10px; overflow: auto; max-height: 200px; }
-        button { 
-            padding: 8px 16px; 
-            cursor: pointer; 
-            background-color: var(--vscode-button-background); 
-            color: var(--vscode-button-foreground); 
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+            background-color: transparent;
+            color: #E0E0E0;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .card {
+            background: rgba(25, 25, 30, 0.85);
+            border-radius: 16px;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            width: 100%;
+            max-width: 400px;
+            padding: 24px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        h1 {
+            font-size: 18px;
+            font-weight: 500;
+            margin: 0;
+            color: #FFFFFF;
+        }
+
+        .status-line {
+            font-size: 14px;
+            color: #888888;
+            margin-top: -15px;
+            height: 20px;
+        }
+
+        .icon-area {
+            height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 10px 0;
+        }
+
+        .icon {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            color: #7C7CFF;
+            transition: all 0.3s ease;
+        }
+
+        .icon.listening {
+            background: rgba(124, 124, 255, 0.1);
+            border: 2px solid #7C7CFF;
+            box-shadow: 0 0 15px rgba(124, 124, 255, 0.3);
+        }
+        
+        .icon.processing {
+            border: 2px solid transparent;
+            border-top: 2px solid #7C7CFF;
+            background: transparent;
+            animation: spin 1s linear infinite;
+        }
+
+        .icon.idle {
+            background: #2A2A2A;
+            color: #555;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .plan-card {
+            background: rgba(40, 40, 45, 0.9);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: left;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .plan-cmd {
+            font-family: 'Courier New', Courier, monospace;
+            background: #111;
+            padding: 8px;
+            border-radius: 4px;
+            word-break: break-all;
+            margin-bottom: 8px;
+            color: #7C7CFF;
+            font-size: 13px;
+        }
+
+        .risk-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            text-transform: uppercase;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .risk-low { background: #2E5C38; color: #8FBC9B; }
+        .risk-medium { background: #665228; color: #E0C074; }
+        .risk-high { background: #662E2E; color: #E08585; }
+
+        .plan-exp {
+            font-size: 13px;
+            color: #BBBBBB;
+            margin-bottom: 12px;
+            line-height: 1.4;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 10px;
+        }
+
+        button.btn {
+            background: #333;
+            color: #eee;
             border: none;
-            margin-right: 10px;
-            margin-bottom: 10px;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+            flex: 1;
         }
-        button:hover {
-            background-color: var(--vscode-button-hoverBackground);
+        
+        button.btn:hover {
+            background: #444;
         }
-        .command-section {
-            border-top: 1px solid var(--vscode-panel-border);
-            padding-top: 10px;
+
+        button.btn-primary {
+            background: #7C7CFF;
+            color: #fff;
         }
-        .context-section {
-            border-top: 1px solid var(--vscode-panel-border);
-            padding-top: 10px;
+        
+        button.btn-primary:hover {
+            background: #6B6BFF;
         }
-        .voice-section {
-            border-top: 1px solid var(--vscode-panel-border);
-            padding-top: 10px;
+
+        button.btn-danger {
+            background: #FF5C5C;
+            color: #fff;
         }
-        .config-section {
-            border-top: 1px solid var(--vscode-panel-border);
-            padding-top: 10px;
-            margin-top: 20px;
+        
+        button.btn-danger:hover {
+            background: #FF4444;
         }
+
     </style>
 </head>
 <body>
-    <h1>Gitty Coach (MVP)</h1>
-    <p id="status-text">State: ${stateLabel}</p>
-    <p id="last-command-text">Last verified command: ${lastCommandLabel}</p>
-    
-    <div class="voice-section">
-        <h2>Voice Control</h2>
-        <p><strong>Wake Engine:</strong> <span id="v-ww-status">${wwStatus}</span></p>
-        <p><strong>Status:</strong> <span id="v-state">${vState}</span></p>
-        <p><strong>Last Wake:</strong> <span id="v-wake">${vWake}</span></p>
-        <p><strong>Last Heard:</strong> <span id="v-heard">${vText}</span></p>
-        <button id="v-start-btn">Start Voice</button>
-        <button id="v-stop-btn">Stop Voice</button>
-    </div>
+    <div class="card">
+        <h1>Say "Hey Gitty" to start</h1>
+        <div class="status-line" id="status-text">Idle</div>
 
-    <div class="context-section">
-        <h2>Repo Context</h2>
-        <button id="refresh-ctx-btn">Refresh Repo Context</button>
-        <p><strong>Git Root:</strong> <span id="ctx-root">${gitRoot}</span></p>
-        <p><strong>Branch:</strong> <span id="ctx-branch">${branch}</span></p>
-        <p><strong>Clean:</strong> <span id="ctx-clean">${clean}</span></p>
-        <pre id="ctx-porcelain">${porcelain}</pre>
-    </div>
+        <div class="icon-area">
+            <div id="main-icon" class="icon idle">
+                <!-- Icon content injected by JS -->
+            </div>
+        </div>
 
-    <div class="config-section">
-        <h2>Config</h2>
-        <button id="config-btn">Open Gitty Settings</button>
-        <p><strong>Voice Enabled:</strong> <span id="cfg-voice-enabled">${voiceEnabled}</span></p>
-        <p><strong>Wake Word:</strong> <span id="cfg-wake-word">${wakeWord}</span></p>
-        <p><strong>Porcupine Keyword:</strong> <span id="cfg-pico-keyword">${porcupineKeyword}</span></p>
-        <p><strong>Sensitivity:</strong> <span id="cfg-pico-sens">${porcupineSensitivity}</span></p>
-        <p><strong>Picovoice AccessKey:</strong> <span id="cfg-pico-key">${picoKeyStatus}</span></p>
-        <p><strong>Groq API Key:</strong> <span id="cfg-groq-key">${groqKeyStatus}</span></p>
-        <p><em>Keys are hidden. Set them in Settings.</em></p>
+        <!-- Plan Section -->
+        <div id="plan-section" style="display: none;">
+            <div class="plan-card">
+                <div id="plan-risk-badge" class="risk-badge risk-low">LOW RISK</div>
+                <div id="plan-command" class="plan-cmd">git status</div>
+                <div id="plan-explanation" class="plan-exp">Checking repository status.</div>
+                
+                <div class="controls" id="plan-controls">
+                    <!-- Injected buttons -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Manual Controls -->
+        <div class="controls">
+            <button id="btn-start" class="btn">Start</button>
+            <button id="btn-stop" class="btn">Stop</button>
+        </div>
     </div>
 
     <script>
         const vscode = acquireVsCodeApi();
-        const statusText = document.getElementById('status-text');
-        const lastCommandText = document.getElementById('last-command-text');
         
-        // Context elements
-        const ctxRoot = document.getElementById('ctx-root');
-        const ctxBranch = document.getElementById('ctx-branch');
-        const ctxClean = document.getElementById('ctx-clean');
-        const ctxPorcelain = document.getElementById('ctx-porcelain');
+        // Element Refs
+        const statusText = document.getElementById('status-text');
+        const mainIcon = document.getElementById('main-icon');
+        const planSection = document.getElementById('plan-section');
+        const planRisk = document.getElementById('plan-risk-badge');
+        const planCmd = document.getElementById('plan-command');
+        const planExp = document.getElementById('plan-explanation');
+        const planControls = document.getElementById('plan-controls');
+        
+        // State
+        let localState = {
+            voiceState: 'off',
+            plan: null,
+            planDismissed: false
+        };
 
-        // Voice elements
-        const vWwStatus = document.getElementById('v-ww-status');
-        const vStateEl = document.getElementById('v-state');
-        const vWakeEl = document.getElementById('v-wake');
-        const vHeardEl = document.getElementById('v-heard');
+        // Icons
+        const icons = {
+            mic: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>',
+            off: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>',
+        };
 
-        // Config elements
-        const cfgVoiceEnabled = document.getElementById('cfg-voice-enabled');
-        const cfgWakeWord = document.getElementById('cfg-wake-word');
-        const cfgPicoKeyword = document.getElementById('cfg-pico-keyword');
-        const cfgPicoSens = document.getElementById('cfg-pico-sens');
-        const cfgPicoKey = document.getElementById('cfg-pico-key');
-        const cfgGroqKey = document.getElementById('cfg-groq-key');
+        // Initial Render
+        render();
 
-        // Buttons
-        document.getElementById('refresh-ctx-btn').addEventListener('click', () => {
-             vscode.postMessage({ command: 'refreshRepoContext' });
+        // Listeners
+        document.getElementById('btn-start').addEventListener('click', () => {
+            vscode.postMessage({ command: 'voiceStart' });
         });
-        document.getElementById('v-start-btn').addEventListener('click', () => {
-             vscode.postMessage({ command: 'voiceStart' });
-        });
-        document.getElementById('v-stop-btn').addEventListener('click', () => {
+        document.getElementById('btn-stop').addEventListener('click', () => {
              vscode.postMessage({ command: 'voiceStop' });
         });
-        document.getElementById('config-btn').addEventListener('click', () => {
-             vscode.postMessage({ command: 'openSettings' });
-        });
 
-        // Handle messages from extension
         window.addEventListener('message', event => {
-            const message = event.data;
-            switch (message.command) {
-                case 'updateState':
-                    // existing updates
-                    const stateStr = message.isListening ? 'Listening' : 'Idle';
-                    const lastCmd = message.lastVerifiedCommand ? message.lastVerifiedCommand : '(none)';
-                    statusText.textContent = 'State: ' + stateStr;
-                    lastCommandText.textContent = 'Last command: ' + lastCmd;
-
-                    // context updates
-                    const ctx = message.repoContext;
-                    if (ctx) {
-                        ctxRoot.textContent = ctx.gitRoot || '(not a git repo)';
-                        ctxBranch.textContent = ctx.branch || '(no branch)';
-                        ctxClean.textContent = ctx.isClean ? 'Yes' : 'No';
-                        
-                        let p = ctx.statusPorcelain || '';
-                        if (p.length > 2000) p = p.substring(0, 2000) + '...';
-                        ctxPorcelain.textContent = p;
+            const msg = event.data;
+            if (msg.command === 'updateState') {
+                if (msg.voice) {
+                    localState.voiceState = msg.voice.state;
+                }
+                
+                if (msg.lastPlan) {
+                    const isNew = !localState.plan || (localState.plan.command !== msg.lastPlan.command);
+                    localState.plan = msg.lastPlan;
+                    if (isNew) {
+                         localState.planDismissed = false;
                     }
-
-                    // voice updates
-                    const voice = message.voice;
-                    if (voice) {
-                        vStateEl.textContent = voice.state;
-                        vWakeEl.textContent = voice.lastWakeAtIso || '-';
-                        vHeardEl.textContent = voice.lastHeardText || '-';
-                    }
-                    if (message.wakeWordRunning !== undefined) {
-                        vWwStatus.textContent = message.wakeWordRunning ? 'Running' : 'Stopped';
-                    }
-
-                     // config updates
-                    const config = message.config;
-                    if (config) {
-                        cfgVoiceEnabled.textContent = config.voiceEnabled;
-                        cfgWakeWord.textContent = config.wakeWord;
-                        cfgPicoKeyword.textContent = config.porcupineKeyword;
-                        cfgPicoSens.textContent = config.porcupineSensitivity;
-                        cfgPicoKey.textContent = config.picovoiceAccessKey ? '(set)' : '(not set)';
-                        cfgGroqKey.textContent = config.groqApiKey ? '(set)' : '(not set)';
-                    }
-                    break;
+                }
+                
+                render();
             }
         });
+
+        function render() {
+            // 1. Status Text & Icon Class
+            let sText = "Idle";
+            let iconClass = "idle";
+            let iconHtml = icons.off;
+
+            switch (localState.voiceState) {
+                case 'wake_listening':
+                    sText = "Listening for the wake phrase";
+                    iconClass = "listening";
+                    iconHtml = icons.mic;
+                    break;
+                case 'command_listening':
+                    sText = "Listening to the command";
+                    iconClass = "listening";
+                    iconHtml = icons.mic;
+                    break;
+                case 'processing':
+                    sText = "Processing";
+                    iconClass = "processing";
+                    iconHtml = ""; 
+                    break;
+                case 'awaiting_confirmation':
+                    sText = "Awaiting confirmation";
+                    iconClass = "idle"; 
+                    iconHtml = icons.mic; 
+                    break;
+                case 'off':
+                default:
+                    sText = "Idle";
+                    iconClass = "idle";
+                    iconHtml = icons.off;
+                    break;
+            }
+
+            statusText.textContent = sText;
+            mainIcon.className = "icon " + iconClass;
+            mainIcon.innerHTML = iconHtml;
+
+            // 2. Plan Section
+            if (localState.plan && !localState.planDismissed) {
+                planSection.style.display = 'block';
+                const p = localState.plan;
+                
+                planCmd.textContent = p.command;
+                planExp.textContent = p.explanation;
+                
+                // Risk Badge
+                planRisk.className = 'risk-badge risk-' + p.risk;
+                planRisk.textContent = p.risk.toUpperCase() + ' RISK';
+
+                // Controls
+                planControls.innerHTML = ''; // clear
+
+                if (p.risk === 'low') {
+                    // Start Button Only
+                    const btnRun = document.createElement('button');
+                    btnRun.className = 'btn btn-primary';
+                    btnRun.textContent = 'Run Command';
+                    btnRun.onclick = () => {
+                        vscode.postMessage({ command: 'executePlan' });
+                    };
+                    planControls.appendChild(btnRun);
+                } else {
+                    // Run + Cancel
+                    const btnRun = document.createElement('button');
+                    btnRun.className = 'btn btn-primary';
+                    btnRun.textContent = 'Run';
+                    btnRun.onclick = () => {
+                        vscode.postMessage({ command: 'executePlan' });
+                    };
+
+                    const btnCancel = document.createElement('button');
+                    btnCancel.className = 'btn'; 
+                    btnCancel.textContent = 'Cancel';
+                    btnCancel.onclick = () => {
+                        localState.planDismissed = true;
+                        vscode.postMessage({ command: 'dismissPlan' });
+                        render();
+                    };
+
+                    planControls.appendChild(btnCancel);
+                    planControls.appendChild(btnRun);
+                }
+
+            } else {
+                planSection.style.display = 'none';
+            }
+        }
     </script>
 </body>
 </html>`;
