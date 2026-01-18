@@ -14,7 +14,11 @@ import { spawn } from "child_process";
 import { groqChatComplete } from "./groqClient";
 import { CommandPlan, Risk } from "./planTypes";
 import { speakText, stopSpeaking } from "./ttsService";
-import { createLearningContext, LearningContext } from "./learningContext";
+import {
+	createLearningContext,
+	LearningContext,
+	addQATurn,
+} from "./learningContext";
 
 interface GittyState {
 	isListening: boolean;
@@ -111,7 +115,7 @@ export function activate(context: vscode.ExtensionContext) {
 				);
 				try {
 					await vscode.commands.executeCommand(
-						"gitty.planAndExecuteFromTranscript",
+						"gitty.routeFromTranscript",
 					);
 				} catch (e: any) {
 					outputChannel.appendLine(`Auto Plan Error: ${e.message}`);
@@ -364,6 +368,202 @@ export function activate(context: vscode.ExtensionContext) {
 		},
 	);
 
+	// Command: Answer Learning Question
+	const answerLearningQuestionCommand = vscode.commands.registerCommand(
+		"gitty.answerLearningQuestion",
+		async () => {
+			const transcript =
+				learningCtx.lastTranscript ||
+				voiceController.getSnapshot().lastHeardText;
+
+			if (!transcript || transcript.trim().length === 0) {
+				vscode.window.showInformationMessage("No question heard.");
+				return;
+			}
+
+			outputChannel.appendLine(`[Gitty] Answering Question: "${transcript}"`);
+
+			const cfg = readConfig();
+			if (!cfg.groqApiKey) {
+				vscode.window.showErrorMessage("Gitty: Groq API Key is missing.");
+				return;
+			}
+
+			// Build Context
+			const repo = learningCtx.repoSummary || {};
+			const plan = learningCtx.lastPlan;
+			const out = learningCtx.lastCommandOutput;
+			const history = learningCtx.recentQA || [];
+
+			const contextMsg = `
+Repo Context:
+Branch: ${repo.branch || "unknown"}
+Status: ${repo.statusPorcelain || "unknown"}
+Git Root: ${repo.gitRoot || "unknown"}
+
+Last Planned Command:
+${plan ? `Cmd: ${plan.command}\nRisk: ${plan.risk}\nExp: ${plan.explanation}` : "None"}
+
+Last Command Output:
+${out ? `Exit: ${out.exitCode}\nStdout: ${out.stdout}` : "None"}
+
+Recent Q&A:
+${history.map((h) => `Q: ${h.q}\nA: ${h.a}`).join("\n")}
+`;
+
+			try {
+				const answer = await groqChatComplete({
+					apiKey: cfg.groqApiKey,
+					model: cfg.groqModel || "llama-3.3-70b-versatile",
+					messages: [
+						{
+							role: "system",
+							content: `You are Gitty in Learning Mode. Answer the user's question about git based on the provided repo context and the proposed command. Be concise (1–5 sentences). If unsure, ask one clarifying question. Do not output JSON.`,
+						},
+						{
+							role: "user",
+							content: `Context:
+${contextMsg}
+
+Question: "${transcript}"`,
+						},
+					],
+					temperature: 0.2,
+					maxTokens: 250,
+				});
+
+				outputChannel.appendLine(`[Gitty] Answer: ${answer}`);
+
+				// Update State
+				learningCtx.lastLearningText = answer;
+				addQATurn(learningCtx, { q: transcript, a: answer });
+
+				// Force broadcast
+				broadcastState();
+
+				// TTS
+				if (cfg.elevenLabsEnabled && cfg.elevenLabsVoiceId) {
+					context.secrets.get("gitty.elevenlabs.apiKey").then((apiKey) => {
+						if (apiKey) {
+							void speakText(context, answer, {
+								voiceId: cfg.elevenLabsVoiceId!,
+								modelId: cfg.elevenLabsModelId,
+								outputFormat: cfg.elevenLabsOutputFormat,
+							}).catch((err) => {
+								outputChannel.appendLine(`[Gitty] TTS Error: ${err.message}`);
+							});
+						}
+					});
+				}
+			} catch (e: any) {
+				outputChannel.appendLine(`[Gitty] Q&A Error: ${e.message}`);
+				vscode.window.showErrorMessage("Failed to answer question through Groq.");
+			}
+		},
+	);
+
+	// Command: Route From Transcript (Groq Router)
+	const routeFromTranscriptCommand = vscode.commands.registerCommand(
+		"gitty.routeFromTranscript",
+		async () => {
+			const transcript = learningCtx.lastTranscript || voiceController.getSnapshot().lastHeardText;
+
+			if (!transcript || transcript.trim().length === 0) {
+				vscode.window.showInformationMessage("No transcript yet.");
+				return;
+			}
+
+			// If Learning Mode OFF -> always command
+			if (!state.learningModeEnabled) {
+				await vscode.commands.executeCommand(
+					"gitty.planAndExecuteFromTranscript",
+				);
+				return;
+			}
+
+			// Learning Mode ON -> Classify
+			const cfg = readConfig();
+			if (!cfg.groqApiKey) {
+				vscode.window.showErrorMessage("Gitty: Groq API Key is missing.");
+				return;
+			}
+
+			outputChannel.appendLine(`[Gitty] Routing: "${transcript}"`);
+
+			try {
+				const response = await groqChatComplete({
+					apiKey: cfg.groqApiKey,
+					model: cfg.groqModel || "llama-3.3-70b-versatile",
+					messages: [
+						{
+							role: "system",
+							content: `You are a router. Classify the user's utterance as either:
+- command: they want Gitty to plan/run an action
+- question: they want explanation/advice
+Return ONLY valid JSON.
+Example JSON: {"type":"question","confidence":0.9,"reason":"starts with what"}`,
+						},
+						{
+							role: "user",
+							content: `Utterance: "${transcript}"
+
+Examples:
+- "commit all my files..." => command
+- "what does rebase do?" => question
+- "is this safe?" => question
+- "switch to main and pull" => command
+- "why is this high risk?" => question
+
+Return ONLY the JSON object.`,
+						},
+					],
+					temperature: 0,
+					maxTokens: 100,
+				});
+
+				// Robust JSON parsing
+				let jsonStr = response;
+				const jsonStart = response.indexOf("{");
+				const jsonEnd = response.lastIndexOf("}");
+				if (jsonStart >= 0 && jsonEnd > jsonStart) {
+					jsonStr = response.substring(jsonStart, jsonEnd + 1);
+				}
+
+				let classification = { type: "question", confidence: 0 };
+				try {
+					classification = JSON.parse(jsonStr);
+				} catch (e) {
+					outputChannel.appendLine(
+						`[Gitty] Router JSON parse failed. Defaulting to question. Raw: ${response}`,
+					);
+				}
+
+				outputChannel.appendLine(
+					`[Gitty] Classified as: ${classification.type} (${classification.confidence})`,
+				);
+
+				if (
+					classification.type === "command" &&
+					(classification.confidence || 0) >= 0.6
+				) {
+					await vscode.commands.executeCommand(
+						"gitty.planAndExecuteFromTranscript",
+					);
+				} else {
+					// Fallback to Question
+					await vscode.commands.executeCommand(
+						"gitty.answerLearningQuestion",
+					);
+				}
+			} catch (e: any) {
+				outputChannel.appendLine(`[Gitty] Router Error: ${e.message}`);
+				// Fallback to command if router fails? Or just show error?
+				// "Safe" behavior might be to do nothing or ask user.
+				// Let's just log.
+			}
+		},
+	);
+
 	// Command: Set ElevenLabs API Key
 	const setElevenLabsApiKeyCommand = vscode.commands.registerCommand(
 		"gitty.setElevenLabsApiKey",
@@ -395,6 +595,8 @@ export function activate(context: vscode.ExtensionContext) {
 		groqPingCommand,
 		executeLastPlanCommand,
 		planAndExecuteCommand,
+		routeFromTranscriptCommand,
+		answerLearningQuestionCommand,
 		voiceStartCommand,
 		voiceStopCommand,
 		setElevenLabsApiKeyCommand,

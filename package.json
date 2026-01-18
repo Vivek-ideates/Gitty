@@ -17,11 +17,21 @@
     "onCommand:gitty.setElevenLabsApiKey",
     "onCommand:gitty.groqPing",
     "onCommand:gitty.executeLastPlan",
-    "onCommand:gitty.planAndExecuteFromTranscript"
+    "onCommand:gitty.planAndExecuteFromTranscript",
+    "onCommand:gitty.routeFromTranscript",
+    "onCommand:gitty.answerLearningQuestion"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "gitty.answerLearningQuestion",
+        "title": "Gitty: Answer Learning Question (Groq)"
+      },
+      {
+        "command": "gitty.routeFromTranscript",
+        "title": "Gitty: Route From Last Transcript (Groq)"
+      },
       {
         "command": "gitty.setElevenLabsApiKey",
         "title": "Gitty: Set ElevenLabs API Key"
