@@ -39,6 +39,7 @@ let outputChannel: vscode.OutputChannel;
 let voiceController: VoiceController;
 let wakeWordService: WakeWordService | undefined;
 let sttInProgress = false;
+let autoPlanExecuteInProgress = false;
 
 export function activate(context: vscode.ExtensionContext) {
 	terminalManager = new TerminalManager();
@@ -331,7 +332,7 @@ export function activate(context: vscode.ExtensionContext) {
 				stderrData += data.toString();
 			});
 
-			child.on("close", (code) => {
+			child.on("close", async (code) => {
 				if (code !== 0) {
 					outputChannel.appendLine(`STT process exited with code ${code}`);
 					outputChannel.appendLine(`stderr: ${stderrData}`);
@@ -356,14 +357,31 @@ export function activate(context: vscode.ExtensionContext) {
 						vscode.window.showErrorMessage(`STT Error: ${result.error}`);
 						outputChannel.appendLine(`STT JSON Error: ${result.error}`);
 					} else {
-						const text = result.text || "";
+						const text = (result.text || "").trim();
 						outputChannel.appendLine(`STT: ${text}`);
-						if (text && text.trim().length > 0) {
+						if (text.length > 0) {
 							vscode.window.showInformationMessage(
 								`Heard: "${text.substring(0, 120)}"`,
 							);
 							voiceController.setHeardText(text);
 							broadcastState();
+
+							// Auto Plan & Execute
+							if (!autoPlanExecuteInProgress) {
+								autoPlanExecuteInProgress = true;
+								outputChannel.appendLine(
+									"Auto: planning + executing from transcript...",
+								);
+								try {
+									await vscode.commands.executeCommand(
+										"gitty.planAndExecuteFromTranscript",
+									);
+								} catch (e: any) {
+									outputChannel.appendLine(`Auto Plan Error: ${e.message}`);
+								} finally {
+									autoPlanExecuteInProgress = false;
+								}
+							}
 						} else {
 							vscode.window.showInformationMessage("Heard nothing.");
 						}
@@ -722,7 +740,9 @@ Constraints:
 				if (result.timedOut) {
 					vscode.window.showWarningMessage("Command timed out.");
 				} else if (result.exitCode === 0) {
-					vscode.window.showInformationMessage("Command executed successfully.");
+					vscode.window.showInformationMessage(
+						"Command executed successfully.",
+					);
 					state.lastVerifiedCommand = plan.command; // track as last verified
 					broadcastState();
 					// Refresh context if successful
