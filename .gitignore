@@ -40,3 +40,4 @@ Thumbs.db
 __pycache__/
 
 resources/porcupine/
+resources/vosk-model/
