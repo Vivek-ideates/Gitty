@@ -59,14 +59,6 @@ export function activate(context: vscode.ExtensionContext) {
 		}),
 	);
 
-	// Command: Toggle Listening
-	const toggleCommand = vscode.commands.registerCommand(
-		"gitty.toggleListening",
-		() => {
-			toggleListening();
-		},
-	);
-
 	// Command: Open Coach
 	const openCoachCommand = vscode.commands.registerCommand(
 		"gitty.openCoach",
@@ -75,172 +67,6 @@ export function activate(context: vscode.ExtensionContext) {
 		},
 	);
 
-	// Command: Spawn Terminal
-	const spawnTerminalCommand = vscode.commands.registerCommand(
-		"gitty.spawnTerminal",
-		() => {
-			terminalManager.show();
-		},
-	);
-
-	// Command: Send Text to Terminal
-	const sendTextCommand = vscode.commands.registerCommand(
-		"gitty.sendTextToTerminal",
-		async () => {
-			const text = await vscode.window.showInputBox({
-				prompt: "Text to send to Gitty terminal",
-			});
-			if (text) {
-				terminalManager.show();
-				terminalManager.sendText(text);
-			}
-		},
-	);
-	// Command: Run Command (Verified)
-	const runCommandVerified = vscode.commands.registerCommand(
-		"gitty.runCommandVerified",
-		async () => {
-			if (
-				!vscode.workspace.workspaceFolders ||
-				vscode.workspace.workspaceFolders.length === 0
-			) {
-				vscode.window.showErrorMessage("No workspace folder open.");
-				return;
-			}
-			const cwd = vscode.workspace.workspaceFolders[0].uri.fsPath;
-
-			const commandText = await vscode.window.showInputBox({
-				prompt: "Command to run (verified) [temporary text input]",
-				placeHolder: "Example: git status",
-				ignoreFocusOut: true,
-			});
-
-			if (!commandText) {
-				return;
-			}
-
-			const result = await verifyAndRunCaptured(
-				commandText,
-				{ cwd },
-				{
-					confirmLow: async (msg) => {
-						const selected = await vscode.window.showInformationMessage(
-							msg,
-							{ modal: true },
-							"Run",
-							"Cancel",
-						);
-						return selected === "Run";
-					},
-					confirmHigh: async (msg) => {
-						const selected = await vscode.window.showWarningMessage(
-							msg,
-							{ modal: true },
-							"Continue",
-							"Cancel",
-						);
-						return selected === "Continue";
-					},
-				},
-				outputChannel,
-			);
-
-			if (result !== null) {
-				state.lastVerifiedCommand = commandText;
-				broadcastState();
-			}
-		},
-	);
-
-	// Command: Run Last Command Again
-	const runLastCommandAgain = vscode.commands.registerCommand(
-		"gitty.runLastCommandAgain",
-		async () => {
-			if (!state.lastVerifiedCommand) {
-				vscode.window.showInformationMessage(
-					"No previous verified command yet.",
-				);
-				return;
-			}
-
-			if (
-				!vscode.workspace.workspaceFolders ||
-				vscode.workspace.workspaceFolders.length === 0
-			) {
-				vscode.window.showErrorMessage("No workspace folder open.");
-				return;
-			}
-			const cwd = vscode.workspace.workspaceFolders[0].uri.fsPath;
-
-			await verifyAndRunCaptured(
-				state.lastVerifiedCommand,
-				{ cwd },
-				{
-					confirmLow: async (msg) => {
-						const selected = await vscode.window.showInformationMessage(
-							msg,
-							{ modal: true },
-							"Run",
-							"Cancel",
-						);
-						return selected === "Run";
-					},
-					confirmHigh: async (msg) => {
-						const selected = await vscode.window.showWarningMessage(
-							msg,
-							{ modal: true },
-							"Continue",
-							"Cancel",
-						);
-						return selected === "Continue";
-					},
-				},
-				outputChannel,
-			);
-			broadcastState();
-		},
-	);
-
-	// Command: Debug Run (git status)
-	const debugRunCommand = vscode.commands.registerCommand(
-		"gitty.debugRunGitStatus",
-		async () => {
-			if (
-				!vscode.workspace.workspaceFolders ||
-				vscode.workspace.workspaceFolders.length === 0
-			) {
-				vscode.window.showErrorMessage("No workspace folder open.");
-				return;
-			}
-			const cwd = vscode.workspace.workspaceFolders[0].uri.fsPath;
-
-			await verifyAndRunCaptured(
-				"git status",
-				{ cwd },
-				{
-					confirmLow: async (msg) => {
-						const selected = await vscode.window.showInformationMessage(
-							msg,
-							{ modal: true },
-							"Run",
-							"Cancel",
-						);
-						return selected === "Run";
-					},
-					confirmHigh: async (msg) => {
-						const selected = await vscode.window.showWarningMessage(
-							msg,
-							{ modal: true },
-							"Continue",
-							"Cancel",
-						);
-						return selected === "Continue";
-					},
-				},
-				outputChannel,
-			);
-		},
-	);
 	// Command: Refresh Repo Context
 	const refreshRepoContextCommand = vscode.commands.registerCommand(
 		"gitty.refreshRepoContext",
@@ -268,39 +94,32 @@ export function activate(context: vscode.ExtensionContext) {
 		},
 	);
 
-	// Command: Capture Speech Once (Python Vosk)
-	const sttCaptureOncePy = vscode.commands.registerCommand(
-		"gitty.sttCaptureOncePy",
-		async () => {
-			const text = await runStt(context, 12, 2200);
-			if (text) {
-				// Auto Plan & Execute
-				if (!autoPlanExecuteInProgress) {
-					autoPlanExecuteInProgress = true;
-					outputChannel.appendLine(
-						"Auto: planning + executing from transcript...",
+	// Function: Capture Speech Once (Internal Use)
+	const sttCaptureOncePy = async () => {
+		const text = await runStt(context, 12, 2200);
+		if (text) {
+			// Auto Plan & Execute
+			if (!autoPlanExecuteInProgress) {
+				autoPlanExecuteInProgress = true;
+				outputChannel.appendLine(
+					"Auto: planning + executing from transcript...",
+				);
+				try {
+					await vscode.commands.executeCommand(
+						"gitty.planAndExecuteFromTranscript",
 					);
-					try {
-						await vscode.commands.executeCommand(
-							"gitty.planAndExecuteFromTranscript",
-						);
-					} catch (e: any) {
-						outputChannel.appendLine(`Auto Plan Error: ${e.message}`);
-					} finally {
-						autoPlanExecuteInProgress = false;
-					}
+				} catch (e: any) {
+					outputChannel.appendLine(`Auto Plan Error: ${e.message}`);
+				} finally {
+					autoPlanExecuteInProgress = false;
 				}
 			}
-		},
-	);
+		}
+	};
 
-	// Command: Capture Voice Confirmation
-	const sttCaptureConfirmPy = vscode.commands.registerCommand(
-		"gitty.sttCaptureConfirmPy",
-		async () => {
-			return await runStt(context, 6, 1200);
-		},
-	);
+	// Function: Capture Voice Confirmation (Internal Use - for now)
+	// Not strictly needed in extension.ts unless exposed as a tool
+	// but keeping the logic in runStt usage within commandExecutor or extension flows
 
 	// Command: Voice Start
 	const voiceStartCommand = vscode.commands.registerCommand(
@@ -351,7 +170,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 							try {
 								// 3. Trigger One-Shot Capture
-								await vscode.commands.executeCommand("gitty.sttCaptureOncePy");
+								await sttCaptureOncePy();
 							} catch (e: any) {
 								outputChannel.appendLine(
 									`[Gitty] STT Trigger Error: ${e.message}`,
@@ -391,15 +210,6 @@ export function activate(context: vscode.ExtensionContext) {
 		},
 	);
 
-	// Command: Simulate Wake Word
-	const voiceSimulateCommand = vscode.commands.registerCommand(
-		"gitty.simulateWakeWord",
-		() => {
-			voiceController.simulateWakeWord();
-			vscode.commands.executeCommand("gitty.openCoach");
-		},
-	);
-
 	// Command: Groq Ping
 	const groqPingCommand = vscode.commands.registerCommand(
 		"gitty.groqPing",
@@ -429,129 +239,6 @@ export function activate(context: vscode.ExtensionContext) {
 			} catch (e: any) {
 				outputChannel.appendLine(`[Gitty] Groq Error: ${e.message}`);
 				vscode.window.showErrorMessage(`Groq Ping Failed: ${e.message}`);
-			}
-		},
-	);
-
-	// Command: Groq Plan From Transcript
-	const groqPlanFromTranscriptCommand = vscode.commands.registerCommand(
-		"gitty.groqPlanFromTranscript",
-		async () => {
-			const cfg = readConfig();
-			if (!cfg.groqEnabled) {
-				vscode.window.showErrorMessage("Gitty: Groq is disabled in settings.");
-				return;
-			}
-			if (!cfg.groqApiKey) {
-				vscode.window.showErrorMessage("Gitty: Groq API Key is missing.");
-				return;
-			}
-
-			const transcript = voiceController.getSnapshot().lastHeardText;
-			if (!transcript || transcript.trim().length === 0) {
-				vscode.window.showInformationMessage(
-					"No transcript yet. Say a command first.",
-				);
-				return;
-			}
-
-			outputChannel.appendLine(`[Gitty] Planning for: "${transcript}"`);
-
-			// Build Context Block
-			const repoCtx = state.repoContext;
-			let contextStr = "No valid git repository.";
-			if (repoCtx && repoCtx.gitRoot) {
-				const statusShort =
-					(repoCtx.statusPorcelain || "").substring(0, 2000) +
-					(repoCtx.statusPorcelain && repoCtx.statusPorcelain.length > 2000
-						? "\n...[truncated]"
-						: "");
-				contextStr = `Git Root found.
-Current Branch: ${repoCtx.branch || "unknown"}
-Git Status (porcelain):
-${statusShort}`;
-			}
-
-			try {
-				const response = await groqChatComplete({
-					apiKey: cfg.groqApiKey,
-					model: cfg.groqModel || "llama-3.3-70b-versatile",
-					messages: [
-						{
-							role: "system",
-							content: `You are Gitty, a git command planner. Return ONLY valid JSON and nothing else.
-Produce a JSON object with this shape:
-{
-  "command": "string",
-  "risk": "low" | "medium" | "high",
-  "explanation": "string (max 1 sentence)"
-}`,
-						},
-						{
-							role: "user",
-							content: `User Intent: "${transcript}"
-
-Repo Context:
-${contextStr}
-
-Constraints:
-1. Produce ONE valid shell command (can use &&).
-2. Prefer safe, common git commands.
-3. If intent is ambiguous or dangerous, set risk="high" or choose a read-only command like "git status".
-4. If checking status/diff, set risk="low".
-5. If modifying history (rebase, reset --hard), set risk="high".
-6. Return ONLY the JSON object.`,
-						},
-					],
-					temperature: 0.2,
-					maxTokens: 250,
-				});
-
-				outputChannel.appendLine(`[Gitty] Raw Plan JSON: ${response}`);
-
-				// Robust JSON parsing
-				let jsonStart = response.indexOf("{");
-				let jsonEnd = response.lastIndexOf("}");
-				let jsonStr = response;
-				if (jsonStart >= 0 && jsonEnd > jsonStart) {
-					jsonStr = response.substring(jsonStart, jsonEnd + 1);
-				}
-
-				const planRaw = JSON.parse(jsonStr);
-
-				// Validate / Default
-				const plan: CommandPlan = {
-					command:
-						typeof planRaw.command === "string"
-							? planRaw.command
-							: "echo error",
-					risk: ["low", "medium", "high"].includes(planRaw.risk)
-						? (planRaw.risk as Risk)
-						: "medium",
-					explanation:
-						typeof planRaw.explanation === "string"
-							? planRaw.explanation
-							: "Run command.",
-				};
-
-				// Save Plan
-				state.lastPlan = plan;
-				outputChannel.appendLine(`[Gitty] Plan Accepted:`);
-				outputChannel.appendLine(`  Cmd: ${plan.command}`);
-				outputChannel.appendLine(`  Risk: ${plan.risk}`);
-				outputChannel.appendLine(`  Exp: ${plan.explanation}`);
-				outputChannel.show(true);
-
-				const shortCmd =
-					plan.command.length > 80
-						? plan.command.substring(0, 80) + "..."
-						: plan.command;
-				vscode.window.showInformationMessage(`Planned: ${shortCmd}`);
-
-				broadcastState();
-			} catch (e: any) {
-				outputChannel.appendLine(`[Gitty] Planning Error: ${e.message}`);
-				vscode.window.showErrorMessage("Failed to plan command. See Output.");
 			}
 		},
 	);
@@ -673,7 +360,7 @@ Constraints:
 	const planAndExecuteCommand = vscode.commands.registerCommand(
 		"gitty.planAndExecuteFromTranscript",
 		async () => {
-			await vscode.commands.executeCommand("gitty.groqPlanFromTranscript");
+			await planFromTranscriptInternal();
 			if (state.lastPlan) {
 				await vscode.commands.executeCommand("gitty.executeLastPlan");
 			}
@@ -684,28 +371,19 @@ Constraints:
 	statusBarItem = vscode.window.createStatusBarItem(
 		vscode.StatusBarAlignment.Left,
 	);
-	statusBarItem.command = "gitty.toggleListening";
+	statusBarItem.command = "gitty.openCoach";
 	// Initialize status bar state
 	statusBarItem.text = "Gitty: Idle";
 	statusBarItem.show();
 
 	context.subscriptions.push(
-		toggleCommand,
 		openCoachCommand,
-		spawnTerminalCommand,
-		sendTextCommand,
-		runCommandVerified,
-		runLastCommandAgain,
-		debugRunCommand,
 		refreshRepoContextCommand,
-		sttCaptureOncePy,
 		groqPingCommand,
-		groqPlanFromTranscriptCommand,
 		executeLastPlanCommand,
 		planAndExecuteCommand,
 		voiceStartCommand,
 		voiceStopCommand,
-		voiceSimulateCommand,
 		statusBarItem,
 		outputChannel,
 	);
@@ -828,20 +506,6 @@ function setupWebview(context: vscode.ExtensionContext) {
 	currentPanel.webview.onDidReceiveMessage(
 		async (message) => {
 			switch (message.command) {
-				case "toggle":
-					toggleListening();
-					break;
-				case "showTerminal":
-					vscode.commands.executeCommand("gitty.spawnTerminal");
-					break;
-				case "runVerifiedCommand":
-					await vscode.commands.executeCommand("gitty.runCommandVerified");
-					broadcastState();
-					break;
-				case "runLastCommandAgain":
-					await vscode.commands.executeCommand("gitty.runLastCommandAgain");
-					broadcastState();
-					break;
 				case "refreshRepoContext":
 					await vscode.commands.executeCommand("gitty.refreshRepoContext");
 					break;
@@ -850,9 +514,6 @@ function setupWebview(context: vscode.ExtensionContext) {
 					break;
 				case "voiceStop":
 					vscode.commands.executeCommand("gitty.voiceStop");
-					break;
-				case "simulateWakeWord":
-					vscode.commands.executeCommand("gitty.simulateWakeWord");
 					break;
 				case "openSettings":
 					vscode.commands.executeCommand(
@@ -962,16 +623,8 @@ function getWebviewContent(initialState: GittyState) {
 <body>
     <h1>Gitty Coach (MVP)</h1>
     <p id="status-text">State: ${stateLabel}</p>
-    <button id="toggle-btn">Toggle Listening</button>
+    <p id="last-command-text">Last verified command: ${lastCommandLabel}</p>
     
-    <div class="command-section">
-        <h2>Commands</h2>
-        <button id="terminal-btn">Show Terminal</button>
-        <button id="run-verified-btn">Run Verified Command...</button>
-        <button id="run-last-btn">Run Last Command Again</button>
-        <p id="last-command-text">Last command: ${lastCommandLabel}</p>
-    </div>
-
     <div class="voice-section">
         <h2>Voice Control</h2>
         <p><strong>Wake Engine:</strong> <span id="v-ww-status">${wwStatus}</span></p>
@@ -980,7 +633,6 @@ function getWebviewContent(initialState: GittyState) {
         <p><strong>Last Heard:</strong> <span id="v-heard">${vText}</span></p>
         <button id="v-start-btn">Start Voice</button>
         <button id="v-stop-btn">Stop Voice</button>
-        <button id="v-sim-btn">Simulate Wake Word</button>
     </div>
 
     <div class="context-section">
@@ -1030,18 +682,6 @@ function getWebviewContent(initialState: GittyState) {
         const cfgGroqKey = document.getElementById('cfg-groq-key');
 
         // Buttons
-        document.getElementById('toggle-btn').addEventListener('click', () => {
-            vscode.postMessage({ command: 'toggle' });
-        });
-        document.getElementById('terminal-btn').addEventListener('click', () => {
-             vscode.postMessage({ command: 'showTerminal' });
-        });
-        document.getElementById('run-verified-btn').addEventListener('click', () => {
-             vscode.postMessage({ command: 'runVerifiedCommand' });
-        });
-        document.getElementById('run-last-btn').addEventListener('click', () => {
-             vscode.postMessage({ command: 'runLastCommandAgain' });
-        });
         document.getElementById('refresh-ctx-btn').addEventListener('click', () => {
              vscode.postMessage({ command: 'refreshRepoContext' });
         });
@@ -1050,9 +690,6 @@ function getWebviewContent(initialState: GittyState) {
         });
         document.getElementById('v-stop-btn').addEventListener('click', () => {
              vscode.postMessage({ command: 'voiceStop' });
-        });
-        document.getElementById('v-sim-btn').addEventListener('click', () => {
-             vscode.postMessage({ command: 'simulateWakeWord' });
         });
         document.getElementById('config-btn').addEventListener('click', () => {
              vscode.postMessage({ command: 'openSettings' });
@@ -1128,7 +765,7 @@ async function runStt(
 	const pythonPath = context.asAbsolutePath(".venv/bin/python");
 	const scriptPath = context.asAbsolutePath("scripts/stt_capture.py");
 	const modelDir = context.asAbsolutePath(
-		"resources/vosk-model/vosk-model-small-en-us-0.15",
+		"resources/vosk-model/vosk-model-en-us-0.22-lgraph",
 	);
 
 	if (!fs.existsSync(pythonPath)) {
@@ -1231,6 +868,123 @@ async function runStt(
 			}
 		});
 	});
+}
+
+async function planFromTranscriptInternal() {
+	const cfg = readConfig();
+	if (!cfg.groqEnabled) {
+		vscode.window.showErrorMessage("Gitty: Groq is disabled in settings.");
+		return;
+	}
+	if (!cfg.groqApiKey) {
+		vscode.window.showErrorMessage("Gitty: Groq API Key is missing.");
+		return;
+	}
+
+	const transcript = voiceController.getSnapshot().lastHeardText;
+	if (!transcript || transcript.trim().length === 0) {
+		vscode.window.showInformationMessage(
+			"No transcript yet. Say a command first.",
+		);
+		return;
+	}
+
+	outputChannel.appendLine(`[Gitty] Planning for: "${transcript}"`);
+
+	// Build Context Block
+	const repoCtx = state.repoContext;
+	let contextStr = "No valid git repository.";
+	if (repoCtx && repoCtx.gitRoot) {
+		const statusShort =
+			(repoCtx.statusPorcelain || "").substring(0, 2000) +
+			(repoCtx.statusPorcelain && repoCtx.statusPorcelain.length > 2000
+				? "\n...[truncated]"
+				: "");
+		contextStr = `Git Root found.
+Current Branch: ${repoCtx.branch || "unknown"}
+Git Status (porcelain):
+${statusShort}`;
+	}
+
+	try {
+		const response = await groqChatComplete({
+			apiKey: cfg.groqApiKey,
+			model: cfg.groqModel || "llama-3.3-70b-versatile",
+			messages: [
+				{
+					role: "system",
+					content: `You are Gitty, a git command planner. Return ONLY valid JSON and nothing else.
+Produce a JSON object with this shape:
+{
+  "command": "string",
+  "risk": "low" | "medium" | "high",
+  "explanation": "string (max 1 sentence)"
+}`,
+				},
+				{
+					role: "user",
+					content: `User Intent: "${transcript}"
+
+Repo Context:
+${contextStr}
+
+Constraints:
+1. Produce ONE valid shell command (can use &&).
+2. Prefer safe, common git commands.
+3. If intent is ambiguous or dangerous, set risk="high" or choose a read-only command like "git status".
+4. If checking status/diff, set risk="low".
+5. If modifying history (rebase, reset --hard), set risk="high".
+6. Return ONLY the JSON object.`,
+				},
+			],
+			temperature: 0.2,
+			maxTokens: 250,
+		});
+
+		outputChannel.appendLine(`[Gitty] Raw Plan JSON: ${response}`);
+
+		// Robust JSON parsing
+		let jsonStart = response.indexOf("{");
+		let jsonEnd = response.lastIndexOf("}");
+		let jsonStr = response;
+		if (jsonStart >= 0 && jsonEnd > jsonStart) {
+			jsonStr = response.substring(jsonStart, jsonEnd + 1);
+		}
+
+		const planRaw = JSON.parse(jsonStr);
+
+		// Validate / Default
+		const plan: CommandPlan = {
+			command:
+				typeof planRaw.command === "string" ? planRaw.command : "echo error",
+			risk: ["low", "medium", "high"].includes(planRaw.risk)
+				? (planRaw.risk as Risk)
+				: "medium",
+			explanation:
+				typeof planRaw.explanation === "string"
+					? planRaw.explanation
+					: "Run command.",
+		};
+
+		// Save Plan
+		state.lastPlan = plan;
+		outputChannel.appendLine(`[Gitty] Plan Accepted:`);
+		outputChannel.appendLine(`  Cmd: ${plan.command}`);
+		outputChannel.appendLine(`  Risk: ${plan.risk}`);
+		outputChannel.appendLine(`  Exp: ${plan.explanation}`);
+		outputChannel.show(true);
+
+		const shortCmd =
+			plan.command.length > 80
+				? plan.command.substring(0, 80) + "..."
+				: plan.command;
+		vscode.window.showInformationMessage(`Planned: ${shortCmd}`);
+
+		broadcastState();
+	} catch (e: any) {
+		outputChannel.appendLine(`[Gitty] Planning Error: ${e.message}`);
+		vscode.window.showErrorMessage("Failed to plan command. See Output.");
+	}
 }
 
 export function deactivate() {}

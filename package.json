@@ -11,19 +11,10 @@
   ],
   "activationEvents": [
     "onCommand:gitty.openCoach",
-    "onCommand:gitty.toggleListening",
-    "onCommand:gitty.spawnTerminal",
-    "onCommand:gitty.sendTextToTerminal",
-    "onCommand:gitty.debugRunGitStatus",
-    "onCommand:gitty.runCommandVerified",
-    "onCommand:gitty.runLastCommandAgain",
     "onCommand:gitty.refreshRepoContext",
     "onCommand:gitty.voiceStart",
     "onCommand:gitty.voiceStop",
-    "onCommand:gitty.simulateWakeWord",
-    "onCommand:gitty.sttCaptureOncePy",
     "onCommand:gitty.groqPing",
-    "onCommand:gitty.groqPlanFromTranscript",
     "onCommand:gitty.executeLastPlan",
     "onCommand:gitty.planAndExecuteFromTranscript"
   ],
@@ -39,44 +30,12 @@
         "title": "Gitty: Execute Last Plan (Verified)"
       },
       {
-        "command": "gitty.groqPlanFromTranscript",
-        "title": "Gitty: Plan Command From Last Transcript (Groq)"
-      },
-      {
         "command": "gitty.groqPing",
         "title": "Gitty: Groq Ping"
       },
       {
-        "command": "gitty.sttCaptureOncePy",
-        "title": "Gitty: Capture Speech Once (Python Vosk)"
-      },
-      {
         "command": "gitty.openCoach",
         "title": "Gitty: Open Coach"
-      },
-      {
-        "command": "gitty.toggleListening",
-        "title": "Gitty: Toggle Listening"
-      },
-      {
-        "command": "gitty.spawnTerminal",
-        "title": "Gitty: Spawn Terminal"
-      },
-      {
-        "command": "gitty.sendTextToTerminal",
-        "title": "Gitty: Send Text to Terminal"
-      },
-      {
-        "command": "gitty.debugRunGitStatus",
-        "title": "Gitty: Debug Run (git status)"
-      },
-      {
-        "command": "gitty.runCommandVerified",
-        "title": "Gitty: Run Command (Verified)"
-      },
-      {
-        "command": "gitty.runLastCommandAgain",
-        "title": "Gitty: Run Last Command Again (Verified)"
       },
       {
         "command": "gitty.refreshRepoContext",
@@ -89,10 +48,6 @@
       {
         "command": "gitty.voiceStop",
         "title": "Gitty: Stop Voice"
-      },
-      {
-        "command": "gitty.simulateWakeWord",
-        "title": "Gitty: Simulate Wake Word"
       }
     ],
     "configuration": {
