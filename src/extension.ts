@@ -281,37 +281,10 @@ export function activate(context: vscode.ExtensionContext) {
 
 			// Verification Flow based on Risk
 			const message = `Run: ${plan.command}\n\nExplanation: ${plan.explanation}`;
-			let confirmed = false;
+			const confirmed = true;
 
-			if (plan.risk === "high") {
-				// Two-step confirmation for high risk
-				const step1 = await vscode.window.showWarningMessage(
-					`[HIGH RISK] ${plan.explanation}. Continue?`,
-					{ modal: true },
-					"Data Loss Risk: Continue",
-					"Cancel",
-				);
-				if (step1 === "Data Loss Risk: Continue") {
-					const step2 = await vscode.window.showWarningMessage(
-						`Are you sure you want to run: ${plan.command}?`,
-						{ modal: true },
-						"Yes, Run It",
-						"Cancel",
-					);
-					confirmed = step2 === "Yes, Run It";
-				}
-			} else if (plan.risk === "medium") {
-				const choice = await vscode.window.showWarningMessage(
-					`[Medium Risk] ${message}`,
-					{ modal: true },
-					"Run",
-					"Cancel",
-				);
-				confirmed = choice === "Run";
-			} else {
-				// low risk - Auto run without confirmation for better flow
-				confirmed = true;
-			}
+			// NOTE: Verification logic moved to UI/Webview. 
+			// High/Medium risk commands initiated via webview "Run" button are considered confirmed.
 
 			if (!confirmed) {
 				vscode.window.showInformationMessage("Command cancelled.");
@@ -363,8 +336,13 @@ export function activate(context: vscode.ExtensionContext) {
 	const planAndExecuteCommand = vscode.commands.registerCommand(
 		"gitty.planAndExecuteFromTranscript",
 		async () => {
-			await planFromTranscriptInternal();
-			if (state.lastPlan) {
+			await planFromTranscriptInternal(context);
+			// Auto-execution logic:
+			// If Last Plan exists:
+			//   - If Low Risk: Auto-execute
+			//   - If Medium/High Risk: Stop here. Rely on Webview UI to let user click "Run".
+			//     (Webview sends "executePlan" which calls gitty.executeLastPlan)
+			if (state.lastPlan && state.lastPlan.risk === "low") {
 				await vscode.commands.executeCommand("gitty.executeLastPlan");
 			}
 		},
@@ -1028,7 +1006,7 @@ async function runStt(
 	});
 }
 
-async function planFromTranscriptInternal() {
+async function planFromTranscriptInternal(context: vscode.ExtensionContext) {
 	const cfg = readConfig();
 	if (!cfg.groqEnabled) {
 		vscode.window.showErrorMessage("Gitty: Groq is disabled in settings.");
