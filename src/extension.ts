@@ -11,6 +11,8 @@ import { WakeWordService } from "./wakeWordService";
 import * as path from "path";
 import * as fs from "fs";
 import { spawn } from "child_process";
+import { groqChatComplete } from "./groqClient";
+import { CommandPlan, Risk } from "./planTypes";
 
 interface GittyState {
 	isListening: boolean;
@@ -18,6 +20,7 @@ interface GittyState {
 	repoContext: RepoContext | undefined;
 	voice: VoiceSnapshot;
 	config: GittyConfig;
+	lastPlan: CommandPlan | undefined;
 }
 
 const state: GittyState = {
@@ -26,6 +29,7 @@ const state: GittyState = {
 	repoContext: undefined,
 	voice: { state: "off" },
 	config: readConfig(),
+	lastPlan: undefined,
 };
 
 let statusBarItem: vscode.StatusBarItem;
@@ -470,6 +474,162 @@ export function activate(context: vscode.ExtensionContext) {
 		},
 	);
 
+	// Command: Groq Ping
+	const groqPingCommand = vscode.commands.registerCommand(
+		"gitty.groqPing",
+		async () => {
+			const cfg = readConfig();
+			if (!cfg.groqEnabled) {
+				vscode.window.showErrorMessage("Gitty: Groq is disabled in settings.");
+				return;
+			}
+			if (!cfg.groqApiKey) {
+				vscode.window.showErrorMessage("Gitty: Groq API Key is missing.");
+				return;
+			}
+
+			outputChannel.appendLine("[Gitty] Pinging Groq...");
+			try {
+				const response = await groqChatComplete({
+					apiKey: cfg.groqApiKey,
+					model: cfg.groqModel || "llama-3.3-70b-versatile",
+					messages: [{ role: "user", content: "Reply with exactly: pong" }],
+					temperature: 0,
+					maxTokens: 10,
+				});
+
+				outputChannel.appendLine(`[Gitty] Groq Response: ${response}`);
+				vscode.window.showInformationMessage(`Groq says: ${response}`);
+			} catch (e: any) {
+				outputChannel.appendLine(`[Gitty] Groq Error: ${e.message}`);
+				vscode.window.showErrorMessage(`Groq Ping Failed: ${e.message}`);
+			}
+		},
+	);
+
+	// Command: Groq Plan From Transcript
+	const groqPlanFromTranscriptCommand = vscode.commands.registerCommand(
+		"gitty.groqPlanFromTranscript",
+		async () => {
+			const cfg = readConfig();
+			if (!cfg.groqEnabled) {
+				vscode.window.showErrorMessage("Gitty: Groq is disabled in settings.");
+				return;
+			}
+			if (!cfg.groqApiKey) {
+				vscode.window.showErrorMessage("Gitty: Groq API Key is missing.");
+				return;
+			}
+
+			const transcript = voiceController.getSnapshot().lastHeardText;
+			if (!transcript || transcript.trim().length === 0) {
+				vscode.window.showInformationMessage(
+					"No transcript yet. Say a command first.",
+				);
+				return;
+			}
+
+			outputChannel.appendLine(`[Gitty] Planning for: "${transcript}"`);
+
+			// Build Context Block
+			const repoCtx = state.repoContext;
+			let contextStr = "No valid git repository.";
+			if (repoCtx && repoCtx.gitRoot) {
+				const statusShort =
+					(repoCtx.statusPorcelain || "").substring(0, 2000) +
+					(repoCtx.statusPorcelain && repoCtx.statusPorcelain.length > 2000
+						? "\n...[truncated]"
+						: "");
+				contextStr = `Git Root found.
+Current Branch: ${repoCtx.branch || "unknown"}
+Git Status (porcelain):
+${statusShort}`;
+			}
+
+			try {
+				const response = await groqChatComplete({
+					apiKey: cfg.groqApiKey,
+					model: cfg.groqModel || "llama-3.3-70b-versatile",
+					messages: [
+						{
+							role: "system",
+							content: `You are Gitty, a git command planner. Return ONLY valid JSON and nothing else.
+Produce a JSON object with this shape:
+{
+  "command": "string",
+  "risk": "low" | "medium" | "high",
+  "explanation": "string (max 1 sentence)"
+}`,
+						},
+						{
+							role: "user",
+							content: `User Intent: "${transcript}"
+
+Repo Context:
+${contextStr}
+
+Constraints:
+1. Produce ONE valid shell command (can use &&).
+2. Prefer safe, common git commands.
+3. If intent is ambiguous or dangerous, set risk="high" or choose a read-only command like "git status".
+4. If checking status/diff, set risk="low".
+5. If modifying history (rebase, reset --hard), set risk="high".
+6. Return ONLY the JSON object.`,
+						},
+					],
+					temperature: 0.2,
+					maxTokens: 250,
+				});
+
+				outputChannel.appendLine(`[Gitty] Raw Plan JSON: ${response}`);
+
+				// Robust JSON parsing
+				let jsonStart = response.indexOf("{");
+				let jsonEnd = response.lastIndexOf("}");
+				let jsonStr = response;
+				if (jsonStart >= 0 && jsonEnd > jsonStart) {
+					jsonStr = response.substring(jsonStart, jsonEnd + 1);
+				}
+
+				const planRaw = JSON.parse(jsonStr);
+
+				// Validate / Default
+				const plan: CommandPlan = {
+					command:
+						typeof planRaw.command === "string"
+							? planRaw.command
+							: "echo error",
+					risk: ["low", "medium", "high"].includes(planRaw.risk)
+						? (planRaw.risk as Risk)
+						: "medium",
+					explanation:
+						typeof planRaw.explanation === "string"
+							? planRaw.explanation
+							: "Run command.",
+				};
+
+				// Save Plan
+				state.lastPlan = plan;
+				outputChannel.appendLine(`[Gitty] Plan Accepted:`);
+				outputChannel.appendLine(`  Cmd: ${plan.command}`);
+				outputChannel.appendLine(`  Risk: ${plan.risk}`);
+				outputChannel.appendLine(`  Exp: ${plan.explanation}`);
+				outputChannel.show(true);
+
+				const shortCmd =
+					plan.command.length > 80
+						? plan.command.substring(0, 80) + "..."
+						: plan.command;
+				vscode.window.showInformationMessage(`Planned: ${shortCmd}`);
+
+				broadcastState();
+			} catch (e: any) {
+				outputChannel.appendLine(`[Gitty] Planning Error: ${e.message}`);
+				vscode.window.showErrorMessage("Failed to plan command. See Output.");
+			}
+		},
+	);
+
 	// Status Bar
 	statusBarItem = vscode.window.createStatusBarItem(
 		vscode.StatusBarAlignment.Left,
@@ -489,6 +649,8 @@ export function activate(context: vscode.ExtensionContext) {
 		debugRunCommand,
 		refreshRepoContextCommand,
 		sttCaptureOncePy,
+		groqPingCommand,
+		groqPlanFromTranscriptCommand,
 		voiceStartCommand,
 		voiceStopCommand,
 		voiceSimulateCommand,
