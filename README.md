@@ -1,71 +1,241 @@
-# gitty README
+# 🎙️ Gitty
 
-This is the README for your extension "gitty". After writing up a brief description, we recommend including the following sections.
+### Your Voice Controlled Git Extension in VS Code
 
-## Features
-
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
-
-## Requirements
-
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
-
-## Extension Settings
-
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
+> **A safer, calmer, and more human way to work with Git using voice and AI**
 
 ---
 
-## Following extension guidelines
+## 🧭 Overview
 
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
+**Gitty** is a VS Code extension that turns Git into a voice driven workflow.
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+Instead of memorizing commands or worrying about destructive actions, developers simply explain what they want to do in plain English. Gitty listens, understands repository context, explains the outcome, evaluates risk, and only executes commands when it is safe or when the user explicitly approves.
 
-## Working with Markdown
+You always see what will happen before anything runs.
 
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
+No silent execution  
+No guessing  
+No Git anxiety
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
+Built for **McHacks13**.
 
-## For more information
+---
 
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+## 💡 Why Gitty Exists
 
-**Enjoy!**
+Git is powerful, but it is intimidating.
+
+In co ops and industry environments, a single mistake can break production, wipe changes, or cause a panic message in Slack. Even experienced developers pause before running high impact commands.
+
+Gitty exists to remove that hesitation.
+
+By explaining actions in plain language and enforcing confirmations, Gitty makes Git safer without slowing developers down.
+
+---
+
+## 👤 Who Gitty Is For
+
+Gitty is designed for developers at every stage.
+
+Beginners who want to learn Git without fear  
+Intermediate developers managing multiple branches  
+Professionals working on production codebases
+
+If you have ever thought  
+“Am I about to break something”  
+Gitty is for you.
+
+---
+
+## 🖼️ Demo and Screenshots
+
+| Screenshot  | Description                               |
+| ----------- | ----------------------------------------- |
+| Placeholder | Main Gitty coach interface inside VS Code |
+| Placeholder | Listening and processing states           |
+| Placeholder | Learning mode explanations                |
+
+![Main panel](docs/screenshots/start.png)
+![Gitty's output](docs/screenshots/output.png)
+![Learning Mode](docs/screenshots/learning_mode.png)
+
+Screenshots will be replaced with final visuals before submission.
+
+---
+
+## ✨ Key Features
+
+| Feature               | Description                                              |
+| --------------------- | -------------------------------------------------------- |
+| 🎙️ Voice to Git       | Speak natural language instead of Git syntax             |
+| 👂 Wake Word          | Activate Gitty with “Hey Gitty”                          |
+| 🧠 Context Awareness  | Understands branch state, changes, and repository status |
+| 💬 Clear Explanations | Every command is explained before execution              |
+| ⚠️ Risk Detection     | Commands labeled low medium or high risk                 |
+| 📘 Learning Mode      | Explore Git safely with guided explanations              |
+| 🗣️ Text to Speech     | Gitty speaks feedback using ElevenLabs                   |
+| 🖥️ VS Code Native     | Built directly into the editor                           |
+
+---
+
+## 🧠 How It Works
+
+```
+User Speaks
+↓
+Vosk Speech Recognition
+↓
+Wake Word Detection
+↓
+Repository Context Snapshot
+↓
+Groq LLM Intent Planning
+↓
+Risk Assessment and Explanation
+↓
+User Confirmation
+↓
+Git Command Execution
+↓
+Visual and Spoken Feedback
+
+```
+
+---
+
+## ⚙️ Installation and Setup
+
+```bash
+# from root
+npm install
+npm run compile
+```
+
+### Python (Vosk STT)
+
+```bash
+# create venv in repo
+python3 -m venv .venv
+source .venv/bin/activate
+
+# dependencies
+pip install --upgrade pip
+pip install vosk==0.3.42 sounddevice numpy webrtcvad
+```
+
+### Porcupine Model
+
+Navigate to the [Picovoice console](https://console.picovoice.ai/ppn), set the wake word as "Hey Gitty" and download the model by clicking "Train".
+
+Unzip and place the .ppn file into:
+
+```
+resources/porcupine/
+```
+
+### Vosk Model
+
+Download + unzip a Vosk English model into:
+
+```
+resources/vosk-model/<model-folder>/
+```
+
+Example:
+
+```
+resources/vosk-model/vosk-model-small-en-us-0.15/
+```
+
+Download the models from [here](https://alphacephei.com/vosk/models)
+
+---
+
+### VS Code Settings (JSON)
+
+Open: `Cmd+Shift+P` → **Preferences: Open Settings (JSON)**
+
+```json
+{
+	"gitty.voice.enabled": true,
+	"gitty.picovoice.accessKey": "<YOUR_PICOVOICE_ACCESSKEY>",
+	"gitty.vosk.enabled": true,
+
+	"gitty.groq.enabled": true,
+	"gitty.groq.model": "llama-3.3-70b-versatile",
+	"gitty.groq.apiKey": "<YOUR_API_KEY>",
+
+	"gitty.elevenlabs.enabled": true,
+	"gitty.elevenlabs.voiceId": "<YOUR_VOICE_ID>",
+	"gitty.elevenlabs.modelId": "eleven_turbo_v2_5",
+	"gitty.elevenlabs.outputFormat": "mp3_22050_32",
+	"gitty.elevenlabs.speed": 1.05
+}
+```
+
+### Store ElevenLabs API Keys (Secret Storage)
+
+Run from Command Palette (`Cmd+Shift+P`):
+
+- **Gitty: Set ElevenLabs API Key**
+
+### Run locally (dev)
+
+- Open the repo in VS Code
+- Press **F5** to launch the **Extension Development Host**
+- In the Dev Host: `Cmd+Shift+P` → **Gitty: Open Coach** → **Start button**
+
+---
+
+## 🗣️ Example Voice Commands
+
+| Risk Level | What You Say                                                 |
+| ---------- | ------------------------------------------------------------ |
+| 🟢 Low     | Hey Gitty, check the status                                  |
+| 🟡 Medium  | Hey Gitty, commit all changes with the message update README |
+| 🔴 High    | Hey Gitty, move my last commit to a new branch               |
+
+Gitty always explains actions before running them.
+
+---
+
+## 🧪 Learning Mode
+
+Learning Mode allows users to explore Git without fear.
+
+- Ask questions about commands
+- See explanations in plain English
+- Toggle on or off at any time
+
+Perfect for onboarding and education.
+
+---
+
+## 👥 Contributors
+
+### Team Gitty
+
+- Paurav Hosur Param
+- Vivek Reddy
+- Daniaal Tahir Mahmood
+
+Built for **McHacks13**.
+
+---
+
+## 🪪 License
+
+This project is licensed under the MIT License.
+
+---
+
+## 🧭 Vision
+
+Git should feel empowering, not stressful.
+
+Gitty brings clarity and confidence to version control by letting developers speak naturally, understand actions clearly, and stay in control at every step.
+
+See before you run.  
+Understand Git.  
+Build without fear.
