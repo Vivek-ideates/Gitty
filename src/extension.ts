@@ -34,6 +34,7 @@ let terminalManager: TerminalManager;
 let outputChannel: vscode.OutputChannel;
 let voiceController: VoiceController;
 let wakeWordService: WakeWordService | undefined;
+let sttInProgress = false;
 
 export function activate(context: vscode.ExtensionContext) {
 	terminalManager = new TerminalManager();
@@ -407,11 +408,29 @@ export function activate(context: vscode.ExtensionContext) {
 						keywordPath: keywordPath,
 						sensitivity: cfg.porcupineSensitivity,
 						log: (line) => outputChannel.appendLine(line),
-						onWakeWord: () => {
+						onWakeWord: async () => {
+							if (sttInProgress) {
+								return;
+							}
+							sttInProgress = true;
+
 							// 1. Focus Coach
 							vscode.commands.executeCommand("gitty.openCoach");
 							// 2. Simulate Wake Word (transition state)
 							voiceController.simulateWakeWord();
+
+							try {
+								// 3. Trigger One-Shot Capture
+								await vscode.commands.executeCommand("gitty.sttCaptureOncePy");
+							} catch (e: any) {
+								outputChannel.appendLine(
+									`[Gitty] STT Trigger Error: ${e.message}`,
+								);
+							} finally {
+								// 4. Return to wake listening
+								voiceController.setBackToWakeListening();
+								sttInProgress = false;
+							}
 						},
 					});
 
