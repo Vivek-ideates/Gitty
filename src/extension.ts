@@ -630,6 +630,128 @@ Constraints:
 		},
 	);
 
+	// Command: Execute Last Plan (Verified)
+	const executeLastPlanCommand = vscode.commands.registerCommand(
+		"gitty.executeLastPlan",
+		async () => {
+			if (!state.lastPlan) {
+				vscode.window.showInformationMessage(
+					"No plan yet. Run 'Gitty: Plan Command...' first.",
+				);
+				return;
+			}
+
+			const plan = state.lastPlan;
+
+			// Determine CWD
+			let cwd: string;
+			if (state.repoContext && state.repoContext.gitRoot) {
+				cwd = state.repoContext.gitRoot;
+			} else if (
+				vscode.workspace.workspaceFolders &&
+				vscode.workspace.workspaceFolders.length > 0
+			) {
+				cwd = vscode.workspace.workspaceFolders[0].uri.fsPath;
+			} else {
+				vscode.window.showErrorMessage("No workspace open to run command.");
+				return;
+			}
+
+			// Verification Flow based on Risk
+			const message = `Run: ${plan.command}\n\nExplanation: ${plan.explanation}`;
+			let confirmed = false;
+
+			if (plan.risk === "high") {
+				// Two-step confirmation for high risk
+				const step1 = await vscode.window.showWarningMessage(
+					`[HIGH RISK] ${plan.explanation}. Continue?`,
+					{ modal: true },
+					"Data Loss Risk: Continue",
+					"Cancel",
+				);
+				if (step1 === "Data Loss Risk: Continue") {
+					const step2 = await vscode.window.showWarningMessage(
+						`Are you sure you want to run: ${plan.command}?`,
+						{ modal: true },
+						"Yes, Run It",
+						"Cancel",
+					);
+					confirmed = step2 === "Yes, Run It";
+				}
+			} else if (plan.risk === "medium") {
+				const choice = await vscode.window.showWarningMessage(
+					`[Medium Risk] ${message}`,
+					{ modal: true },
+					"Run",
+					"Cancel",
+				);
+				confirmed = choice === "Run";
+			} else {
+				// low risk
+				const choice = await vscode.window.showInformationMessage(
+					`[Low Risk] ${message}`,
+					{ modal: true },
+					"Run",
+					"Cancel",
+				);
+				confirmed = choice === "Run";
+			}
+
+			if (!confirmed) {
+				vscode.window.showInformationMessage("Command cancelled.");
+				return;
+			}
+
+			// Execute
+			outputChannel.show(true);
+			outputChannel.appendLine(`\n[Gitty] Running: ${plan.command}`);
+			outputChannel.appendLine(`[Gitty] Reason:  ${plan.explanation}`);
+
+			try {
+				const result = await runShellCommandCaptured(plan.command, {
+					cwd,
+					timeoutMs: 30000,
+				});
+
+				outputChannel.appendLine(result.stdout);
+				if (result.stderr && result.stderr.trim().length > 0) {
+					outputChannel.appendLine("[stderr]");
+					outputChannel.appendLine(result.stderr);
+				}
+
+				if (result.timedOut) {
+					vscode.window.showWarningMessage("Command timed out.");
+				} else if (result.exitCode === 0) {
+					vscode.window.showInformationMessage("Command executed successfully.");
+					state.lastVerifiedCommand = plan.command; // track as last verified
+					broadcastState();
+					// Refresh context if successful
+					vscode.commands.executeCommand("gitty.refreshRepoContext");
+				} else {
+					vscode.window.showErrorMessage(
+						`Command failed with exit code ${result.exitCode}`,
+					);
+				}
+			} catch (e: any) {
+				outputChannel.appendLine(`[Gitty] Execution Error: ${e.message}`);
+				vscode.window.showErrorMessage(
+					`Failed to run command: ${e.message || "Unknown error"}`,
+				);
+			}
+		},
+	);
+
+	// Command: Plan + Execute (One-Shot)
+	const planAndExecuteCommand = vscode.commands.registerCommand(
+		"gitty.planAndExecuteFromTranscript",
+		async () => {
+			await vscode.commands.executeCommand("gitty.groqPlanFromTranscript");
+			if (state.lastPlan) {
+				await vscode.commands.executeCommand("gitty.executeLastPlan");
+			}
+		},
+	);
+
 	// Status Bar
 	statusBarItem = vscode.window.createStatusBarItem(
 		vscode.StatusBarAlignment.Left,
@@ -651,6 +773,8 @@ Constraints:
 		sttCaptureOncePy,
 		groqPingCommand,
 		groqPlanFromTranscriptCommand,
+		executeLastPlanCommand,
+		planAndExecuteCommand,
 		voiceStartCommand,
 		voiceStopCommand,
 		voiceSimulateCommand,
