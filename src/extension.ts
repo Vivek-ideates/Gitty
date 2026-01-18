@@ -114,9 +114,7 @@ export function activate(context: vscode.ExtensionContext) {
 					"Auto: planning + executing from transcript...",
 				);
 				try {
-					await vscode.commands.executeCommand(
-						"gitty.routeFromTranscript",
-					);
+					await vscode.commands.executeCommand("gitty.routeFromTranscript");
 				} catch (e: any) {
 					outputChannel.appendLine(`Auto Plan Error: ${e.message}`);
 				} finally {
@@ -221,13 +219,29 @@ export function activate(context: vscode.ExtensionContext) {
 	const voiceStopCommand = vscode.commands.registerCommand(
 		"gitty.voiceStop",
 		async () => {
+			stopSpeaking();
 			voiceController.stop();
 			if (wakeWordService) {
 				await wakeWordService.stop();
 				wakeWordService = undefined;
 				outputChannel.appendLine("[Gitty] Wake word service stopped.");
 			}
+
+			// Hard Reset of State & Flags
+			sttInProgress = false;
+			autoPlanExecuteInProgress = false;
+
+			state.isListening = false;
+			state.lastVerifiedCommand = undefined;
+			state.repoContext = undefined;
+			state.lastPlan = undefined;
+			state.voice = { state: "off" };
+
+			// Reset Learning Context
+			learningCtx = createLearningContext();
+
 			broadcastState();
+			outputChannel.appendLine("[Gitty] Full state reset (except settings).");
 		},
 	);
 
@@ -319,7 +333,7 @@ export function activate(context: vscode.ExtensionContext) {
 					ok: result.exitCode === 0,
 					exitCode: result.exitCode ?? undefined,
 					stdout: result.stdout ? result.stdout.substring(0, 2000) : "",
-					stderr: result.stderr ? result.stderr.substring(0, 2000) : ""
+					stderr: result.stderr ? result.stderr.substring(0, 2000) : "",
 				};
 
 				outputChannel.appendLine(result.stdout);
@@ -457,7 +471,9 @@ Question: "${transcript}"`,
 				}
 			} catch (e: any) {
 				outputChannel.appendLine(`[Gitty] Q&A Error: ${e.message}`);
-				vscode.window.showErrorMessage("Failed to answer question through Groq.");
+				vscode.window.showErrorMessage(
+					"Failed to answer question through Groq.",
+				);
 			}
 		},
 	);
@@ -466,7 +482,9 @@ Question: "${transcript}"`,
 	const routeFromTranscriptCommand = vscode.commands.registerCommand(
 		"gitty.routeFromTranscript",
 		async () => {
-			const transcript = learningCtx.lastTranscript || voiceController.getSnapshot().lastHeardText;
+			const transcript =
+				learningCtx.lastTranscript ||
+				voiceController.getSnapshot().lastHeardText;
 
 			if (!transcript || transcript.trim().length === 0) {
 				vscode.window.showInformationMessage("No transcript yet.");
@@ -551,9 +569,7 @@ Return ONLY the JSON object.`,
 					);
 				} else {
 					// Fallback to Question
-					await vscode.commands.executeCommand(
-						"gitty.answerLearningQuestion",
-					);
+					await vscode.commands.executeCommand("gitty.answerLearningQuestion");
 				}
 			} catch (e: any) {
 				outputChannel.appendLine(`[Gitty] Router Error: ${e.message}`);
@@ -668,9 +684,9 @@ function broadcastState() {
 			voice: state.voice,
 			config: state.config,
 			wakeWordRunning: wakeWordService ? wakeWordService.isRunning : false,
-			lastPlan: state.lastPlan,
+			lastPlan: state.lastPlan || null, // Ensure null is sent
 			learningModeEnabled: state.learningModeEnabled,
-			learningText: learningCtx.lastLearningText
+			learningText: learningCtx.lastLearningText,
 		});
 	}
 }
@@ -1156,9 +1172,8 @@ function getWebviewContent(_initialState: GittyState) {
                     localState.learningModeEnabled = msg.learningModeEnabled;
                 }
                 
-                if (typeof msg.learningText !== 'undefined') {
-                    localState.learningText = msg.learningText;
-                }
+                // Always update (allows clearing)
+                localState.learningText = msg.learningText || '';
                 
                 if (msg.lastPlan) {
                     const isNew = !localState.plan || (localState.plan.command !== msg.lastPlan.command);
@@ -1166,6 +1181,10 @@ function getWebviewContent(_initialState: GittyState) {
                     if (isNew) {
                          localState.planDismissed = false;
                     }
+                } else {
+                    // Explicit clear if missing/null in msg
+                    localState.plan = null;
+                    localState.planDismissed = false;
                 }
                 
                 render();
@@ -1467,8 +1486,8 @@ Constraints:
 3. If intent is ambiguous or dangerous, set risk="high" or choose a read-only command like "git status".
 4. If checking status/diff, set risk="low".
 5. If modifying history (rebase, reset --hard), set risk="high".
-6. Explanation should be 1-2 sentences, narrative style. This is spoken back to the user.
-6. Return ONLY the JSON object.`,
+6. Explanation should be 1-2 sentences, narrative style. This is spoken back to the user. Ensure it is simple to understand.
+7. Return ONLY the JSON object.`,
 				},
 			],
 			temperature: 0.2,
@@ -1502,7 +1521,7 @@ Constraints:
 
 		// Save Plan
 		state.lastPlan = plan;
-		
+
 		// Learning Ctx Update b)
 		learningCtx.lastPlan = plan;
 		learningCtx.lastLearningText = plan.explanation;
@@ -1511,7 +1530,9 @@ Constraints:
 			learningCtx.repoSummary = {
 				branch: rc.branch || undefined,
 				gitRoot: rc.gitRoot || undefined,
-				statusPorcelain: rc.statusPorcelain ? rc.statusPorcelain.substring(0, 2000) : undefined
+				statusPorcelain: rc.statusPorcelain
+					? rc.statusPorcelain.substring(0, 2000)
+					: undefined,
 			};
 		}
 
