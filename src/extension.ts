@@ -270,7 +270,7 @@ export function activate(context: vscode.ExtensionContext) {
 				});
 
 				outputChannel.appendLine(`[Gitty] Groq Response: ${response}`);
-				vscode.window.showInformationMessage(`Groq says: ${response}`);
+				// vscode.window.showInformationMessage(\`Groq says: \${response}\`);
 			} catch (e: any) {
 				outputChannel.appendLine(`[Gitty] Groq Error: ${e.message}`);
 				vscode.window.showErrorMessage(`Groq Ping Failed: ${e.message}`);
@@ -345,9 +345,7 @@ export function activate(context: vscode.ExtensionContext) {
 				if (result.timedOut) {
 					vscode.window.showWarningMessage("Command timed out.");
 				} else if (result.exitCode === 0) {
-					vscode.window.showInformationMessage(
-						"Command executed successfully.",
-					);
+					// vscode.window.showInformationMessage("Command executed successfully.");
 					state.lastVerifiedCommand = plan.command; // track as last verified
 					broadcastState();
 					// Refresh context if successful
@@ -487,7 +485,7 @@ Question: "${transcript}"`,
 				voiceController.getSnapshot().lastHeardText;
 
 			if (!transcript || transcript.trim().length === 0) {
-				vscode.window.showInformationMessage("No transcript yet.");
+				// vscode.window.showInformationMessage("No transcript yet.");
 				return;
 			}
 
@@ -591,7 +589,7 @@ Return ONLY the JSON object.`,
 			});
 			if (output) {
 				await context.secrets.store("gitty.elevenlabs.apiKey", output);
-				vscode.window.showInformationMessage("ElevenLabs API key saved.");
+				// vscode.window.showInformationMessage("ElevenLabs API key saved.");
 			}
 		},
 	);
@@ -1399,9 +1397,7 @@ async function runStt(
 					const text = (result.text || "").trim();
 					outputChannel.appendLine(`STT: ${text}`);
 					if (text.length > 0) {
-						vscode.window.showInformationMessage(
-							`Heard: "${text.substring(0, 120)}"`,
-						);
+						// vscode.window.showInformationMessage(\`Heard: "\${text.substring(0, 120)}"\`);
 						voiceController.setHeardText(text);
 						// Learning Ctx Update a)
 						learningCtx.lastTranscript = text;
@@ -1409,7 +1405,7 @@ async function runStt(
 						broadcastState();
 						resolve(text);
 					} else {
-						vscode.window.showInformationMessage("Heard nothing.");
+						// vscode.window.showInformationMessage("Heard nothing.");
 						resolve(undefined);
 					}
 				}
@@ -1494,7 +1490,7 @@ Constraints:
 			maxTokens: 280,
 		});
 
-		outputChannel.appendLine(`[Gitty] Raw Plan JSON: ${response}`);
+		// outputChannel.appendLine(\`[Gitty] Raw Plan JSON: \${response}\`);
 
 		// Robust JSON parsing
 		let jsonStart = response.indexOf("{");
@@ -1542,11 +1538,13 @@ Constraints:
 		outputChannel.appendLine(`  Exp: ${plan.explanation}`);
 		outputChannel.show(true);
 
+		/*
 		const shortCmd =
 			plan.command.length > 80
 				? plan.command.substring(0, 80) + "..."
 				: plan.command;
-		vscode.window.showInformationMessage(`Planned: ${shortCmd}`);
+		vscode.window.showInformationMessage(\`Planned: \${shortCmd}\`);
+		*/
 
 		broadcastState();
 
