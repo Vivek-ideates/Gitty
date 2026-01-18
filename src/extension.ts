@@ -14,6 +14,7 @@ import { spawn } from "child_process";
 import { groqChatComplete } from "./groqClient";
 import { CommandPlan, Risk } from "./planTypes";
 import { speakText, stopSpeaking } from "./ttsService";
+import { createLearningContext, LearningContext } from "./learningContext";
 
 interface GittyState {
 	isListening: boolean;
@@ -22,6 +23,7 @@ interface GittyState {
 	voice: VoiceSnapshot;
 	config: GittyConfig;
 	lastPlan: CommandPlan | undefined;
+	learningModeEnabled: boolean;
 }
 
 const state: GittyState = {
@@ -31,8 +33,10 @@ const state: GittyState = {
 	voice: { state: "off" },
 	config: readConfig(),
 	lastPlan: undefined,
+	learningModeEnabled: false,
 };
 
+let learningCtx: LearningContext = createLearningContext();
 let statusBarItem: vscode.StatusBarItem;
 let currentPanel: vscode.WebviewPanel | undefined = undefined;
 let terminalManager: TerminalManager;
@@ -306,6 +310,14 @@ export function activate(context: vscode.ExtensionContext) {
 					timeoutMs: 30000,
 				});
 
+				// Learning Ctx Update c)
+				learningCtx.lastCommandOutput = {
+					ok: result.exitCode === 0,
+					exitCode: result.exitCode ?? undefined,
+					stdout: result.stdout ? result.stdout.substring(0, 2000) : "",
+					stderr: result.stderr ? result.stderr.substring(0, 2000) : ""
+				};
+
 				outputChannel.appendLine(result.stdout);
 				if (result.stderr && result.stderr.trim().length > 0) {
 					outputChannel.appendLine("[stderr]");
@@ -455,6 +467,8 @@ function broadcastState() {
 			config: state.config,
 			wakeWordRunning: wakeWordService ? wakeWordService.isRunning : false,
 			lastPlan: state.lastPlan,
+			learningModeEnabled: state.learningModeEnabled,
+			learningText: learningCtx.lastLearningText
 		});
 	}
 }
@@ -528,6 +542,13 @@ function setupWebview(context: vscode.ExtensionContext) {
 						"gitty",
 					);
 					break;
+				case "setLearningMode":
+					state.learningModeEnabled = message.enabled;
+					outputChannel.appendLine(
+						`[Gitty] Learning Mode set to: ${message.enabled}`,
+					);
+					broadcastState();
+					break;
 			}
 		},
 		undefined,
@@ -595,6 +616,67 @@ function getWebviewContent(_initialState: GittyState) {
 
         .settings-btn:hover {
             color: #ccc;
+        }
+
+        /* Toggle Switch */
+        .toggle-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 34px;
+            height: 20px;
+        }
+
+        .switch input { 
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #444;
+            transition: .4s;
+            border-radius: 20px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: #7C7CFF;
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(14px);
+        }
+
+        .toggle-label {
+            font-size: 11px;
+            color: #888;
+            font-weight: 500;
         }
 
         h1 {
@@ -694,6 +776,31 @@ function getWebviewContent(_initialState: GittyState) {
             line-height: 1.4;
         }
 
+        .learning-card {
+            background: rgba(40, 45, 60, 0.9);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: left;
+            border: 1px solid rgba(124, 124, 255, 0.2);
+            margin-top: 10px;
+        }
+
+        .learning-label {
+            font-size: 10px;
+            color: #7C7CFF;
+            font-weight: bold;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .learning-text {
+            font-size: 13px;
+            color: #E0E0E0;
+            line-height: 1.4;
+            font-style: italic;
+        }
+
         .controls {
             display: flex;
             gap: 10px;
@@ -739,6 +846,14 @@ function getWebviewContent(_initialState: GittyState) {
 </head>
 <body>
     <div class="card">
+        <div class="toggle-container" title="Enable Learning Mode">
+            <span class="toggle-label">Learn</span>
+            <label class="switch">
+                <input type="checkbox" id="chk-learning-mode">
+                <span class="slider"></span>
+            </label>
+        </div>
+
         <button id="btn-settings" class="settings-btn" title="Open Settings">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="3"></circle>
@@ -767,6 +882,14 @@ function getWebviewContent(_initialState: GittyState) {
             </div>
         </div>
 
+        <!-- Learning Section -->
+        <div id="learning-section" style="display: none;">
+             <div class="learning-card">
+                 <div class="learning-label">Learning</div>
+                 <div id="learning-content" class="learning-text"></div>
+             </div>
+        </div>
+
         <!-- Manual Controls -->
         <div class="controls">
             <button id="btn-start" class="btn">Start</button>
@@ -785,12 +908,17 @@ function getWebviewContent(_initialState: GittyState) {
         const planCmd = document.getElementById('plan-command');
         const planExp = document.getElementById('plan-explanation');
         const planControls = document.getElementById('plan-controls');
+        const chkLearningMode = document.getElementById('chk-learning-mode');
+        const learningSection = document.getElementById('learning-section');
+        const learningContent = document.getElementById('learning-content');
         
         // State
         let localState = {
             voiceState: 'off',
             plan: null,
-            planDismissed: false
+            planDismissed: false,
+            learningModeEnabled: ${_initialState.learningModeEnabled},
+            learningText: ''
         };
 
         // Icons
@@ -812,12 +940,22 @@ function getWebviewContent(_initialState: GittyState) {
         document.getElementById('btn-settings').addEventListener('click', () => {
              vscode.postMessage({ command: 'openSettings' });
         });
+        chkLearningMode.addEventListener('change', (e) => {
+            vscode.postMessage({ command: 'setLearningMode', enabled: e.target.checked });
+        });
 
         window.addEventListener('message', event => {
             const msg = event.data;
             if (msg.command === 'updateState') {
                 if (msg.voice) {
                     localState.voiceState = msg.voice.state;
+                }
+                if (typeof msg.learningModeEnabled !== 'undefined') {
+                    localState.learningModeEnabled = msg.learningModeEnabled;
+                }
+                
+                if (typeof msg.learningText !== 'undefined') {
+                    localState.learningText = msg.learningText;
                 }
                 
                 if (msg.lastPlan) {
@@ -833,6 +971,9 @@ function getWebviewContent(_initialState: GittyState) {
         });
 
         function render() {
+            // Sync Toggle
+            chkLearningMode.checked = localState.learningModeEnabled;
+
             // 1. Status Text & Icon Class
             let sText = "Idle";
             let iconClass = "idle";
@@ -920,6 +1061,14 @@ function getWebviewContent(_initialState: GittyState) {
             } else {
                 planSection.style.display = 'none';
             }
+
+             // 3. Learning Section
+             if (localState.learningModeEnabled && localState.learningText) {
+                 learningSection.style.display = 'block';
+                 learningContent.textContent = localState.learningText;
+             } else {
+                 learningSection.style.display = 'none';
+             }
         }
     </script>
 </body>
@@ -1033,6 +1182,9 @@ async function runStt(
 							`Heard: "${text.substring(0, 120)}"`,
 						);
 						voiceController.setHeardText(text);
+						// Learning Ctx Update a)
+						learningCtx.lastTranscript = text;
+
 						broadcastState();
 						resolve(text);
 					} else {
@@ -1148,6 +1300,19 @@ Constraints:
 
 		// Save Plan
 		state.lastPlan = plan;
+		
+		// Learning Ctx Update b)
+		learningCtx.lastPlan = plan;
+		learningCtx.lastLearningText = plan.explanation;
+		if (state.repoContext) {
+			const rc = state.repoContext;
+			learningCtx.repoSummary = {
+				branch: rc.branch || undefined,
+				gitRoot: rc.gitRoot || undefined,
+				statusPorcelain: rc.statusPorcelain ? rc.statusPorcelain.substring(0, 2000) : undefined
+			};
+		}
+
 		outputChannel.appendLine(`[Gitty] Plan Accepted:`);
 		outputChannel.appendLine(`  Cmd: ${plan.command}`);
 		outputChannel.appendLine(`  Risk: ${plan.risk}`);
