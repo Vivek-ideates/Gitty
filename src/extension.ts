@@ -10,6 +10,7 @@ import { GittyConfig, readConfig } from "./config";
 import { WakeWordService } from "./wakeWordService";
 import * as path from "path";
 import * as fs from "fs";
+import { spawn } from "child_process";
 
 interface GittyState {
 	isListening: boolean;
@@ -261,6 +262,115 @@ export function activate(context: vscode.ExtensionContext) {
 		},
 	);
 
+	// Command: Capture Speech Once (Python Vosk)
+	const sttCaptureOncePy = vscode.commands.registerCommand(
+		"gitty.sttCaptureOncePy",
+		async () => {
+			if (
+				!vscode.workspace.workspaceFolders ||
+				vscode.workspace.workspaceFolders.length === 0
+			) {
+				vscode.window.showErrorMessage("No workspace folder open.");
+				return;
+			}
+			const workspaceRootOrRepoRoot =
+				vscode.workspace.workspaceFolders[0].uri.fsPath;
+
+			const pythonPath = context.asAbsolutePath(".venv/bin/python");
+			const scriptPath = context.asAbsolutePath("scripts/stt_capture.py");
+			const modelDir = context.asAbsolutePath(
+				"resources/vosk-model/vosk-model-small-en-us-0.15",
+			);
+
+			if (!fs.existsSync(pythonPath)) {
+				const msg = `Python interpreter not found at ${pythonPath}. Please create venv and install dependencies.`;
+				vscode.window.showErrorMessage(msg);
+				return;
+			}
+
+			if (!fs.existsSync(modelDir)) {
+				const msg = `Vosk model not found at ${modelDir}. Please download and unzip the model.`;
+				vscode.window.showErrorMessage(msg);
+				return;
+			}
+
+			vscode.window.showInformationMessage("Listening for 5 seconds...");
+			outputChannel.appendLine(
+				`Running STT with python: ${pythonPath} ${scriptPath}`,
+			);
+
+			const child = spawn(
+				pythonPath,
+				[
+					scriptPath,
+					"--model",
+					modelDir,
+					"--seconds",
+					"5",
+					"--samplerate",
+					"16000",
+				],
+				{
+					cwd: workspaceRootOrRepoRoot,
+				},
+			);
+
+			let stdoutData = "";
+			let stderrData = "";
+
+			child.stdout.on("data", (data) => {
+				stdoutData += data.toString();
+			});
+
+			child.stderr.on("data", (data) => {
+				stderrData += data.toString();
+			});
+
+			child.on("close", (code) => {
+				if (code !== 0) {
+					outputChannel.appendLine(`STT process exited with code ${code}`);
+					outputChannel.appendLine(`stderr: ${stderrData}`);
+					outputChannel.appendLine(`stdout: ${stdoutData}`);
+					vscode.window.showErrorMessage(`STT failed. Check Output -> Gitty.`);
+					return;
+				}
+
+				// Parse last line
+				const lines = stdoutData.trim().split("\n");
+				let lastLine = "";
+				for (let i = lines.length - 1; i >= 0; i--) {
+					if (lines[i].trim().length > 0) {
+						lastLine = lines[i];
+						break;
+					}
+				}
+
+				try {
+					const result = JSON.parse(lastLine);
+					if (result.error) {
+						vscode.window.showErrorMessage(`STT Error: ${result.error}`);
+						outputChannel.appendLine(`STT JSON Error: ${result.error}`);
+					} else {
+						const text = result.text || "";
+						outputChannel.appendLine(`STT: ${text}`);
+						if (text && text.trim().length > 0) {
+							vscode.window.showInformationMessage(
+								`Heard: "${text.substring(0, 120)}"`,
+							);
+							voiceController.setHeardText(text);
+							broadcastState();
+						} else {
+							vscode.window.showInformationMessage("Heard nothing.");
+						}
+					}
+				} catch (e) {
+					outputChannel.appendLine(`Failed to parse JSON: ${lastLine}`);
+					vscode.window.showErrorMessage("STT JSON parse error.");
+				}
+			});
+		},
+	);
+
 	// Command: Voice Start
 	const voiceStartCommand = vscode.commands.registerCommand(
 		"gitty.voiceStart",
@@ -273,7 +383,9 @@ export function activate(context: vscode.ExtensionContext) {
 				return;
 			}
 			if (!cfg.picovoiceAccessKey) {
-				vscode.window.showErrorMessage("Set gitty.picovoice.accessKey in Settings");
+				vscode.window.showErrorMessage(
+					"Set gitty.picovoice.accessKey in Settings",
+				);
 				return;
 			}
 
@@ -357,6 +469,7 @@ export function activate(context: vscode.ExtensionContext) {
 		runLastCommandAgain,
 		debugRunCommand,
 		refreshRepoContextCommand,
+		sttCaptureOncePy,
 		voiceStartCommand,
 		voiceStopCommand,
 		voiceSimulateCommand,

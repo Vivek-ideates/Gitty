@@ -20,11 +20,16 @@
     "onCommand:gitty.refreshRepoContext",
     "onCommand:gitty.voiceStart",
     "onCommand:gitty.voiceStop",
-    "onCommand:gitty.simulateWakeWord"
+    "onCommand:gitty.simulateWakeWord",
+    "onCommand:gitty.sttCaptureOncePy"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "gitty.sttCaptureOncePy",
+        "title": "Gitty: Capture Speech Once (Python Vosk)"
+      },
       {
         "command": "gitty.openCoach",
         "title": "Gitty: Open Coach"
