@@ -50,17 +50,9 @@ Gitty is for you.
 
 ## 🖼️ Demo and Screenshots
 
-| Screenshot  | Description                               |
-| ----------- | ----------------------------------------- |
-| Placeholder | Main Gitty coach interface inside VS Code |
-| Placeholder | Listening and processing states           |
-| Placeholder | Learning mode explanations                |
-
 ![Main panel](docs/screenshots/start.png)
 ![Gitty's output](docs/screenshots/output.png)
 ![Learning Mode](docs/screenshots/learning_mode.png)
-
-Screenshots will be replaced with final visuals before submission.
 
 ---
 
