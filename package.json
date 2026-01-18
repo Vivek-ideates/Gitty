@@ -21,11 +21,31 @@
     "onCommand:gitty.voiceStart",
     "onCommand:gitty.voiceStop",
     "onCommand:gitty.simulateWakeWord",
-    "onCommand:gitty.sttCaptureOncePy"
+    "onCommand:gitty.sttCaptureOncePy",
+    "onCommand:gitty.groqPing",
+    "onCommand:gitty.groqPlanFromTranscript",
+    "onCommand:gitty.executeLastPlan",
+    "onCommand:gitty.planAndExecuteFromTranscript"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "gitty.planAndExecuteFromTranscript",
+        "title": "Gitty: Plan + Execute From Last Transcript (Groq)"
+      },
+      {
+        "command": "gitty.executeLastPlan",
+        "title": "Gitty: Execute Last Plan (Verified)"
+      },
+      {
+        "command": "gitty.groqPlanFromTranscript",
+        "title": "Gitty: Plan Command From Last Transcript (Groq)"
+      },
+      {
+        "command": "gitty.groqPing",
+        "title": "Gitty: Groq Ping"
+      },
       {
         "command": "gitty.sttCaptureOncePy",
         "title": "Gitty: Capture Speech Once (Python Vosk)"
