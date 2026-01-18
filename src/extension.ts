@@ -14,6 +14,11 @@ import { spawn } from "child_process";
 import { groqChatComplete } from "./groqClient";
 import { CommandPlan, Risk } from "./planTypes";
 import { speakText, stopSpeaking } from "./ttsService";
+import {
+	createLearningContext,
+	LearningContext,
+	addQATurn,
+} from "./learningContext";
 
 interface GittyState {
 	isListening: boolean;
@@ -22,6 +27,7 @@ interface GittyState {
 	voice: VoiceSnapshot;
 	config: GittyConfig;
 	lastPlan: CommandPlan | undefined;
+	learningModeEnabled: boolean;
 }
 
 const state: GittyState = {
@@ -31,8 +37,10 @@ const state: GittyState = {
 	voice: { state: "off" },
 	config: readConfig(),
 	lastPlan: undefined,
+	learningModeEnabled: false,
 };
 
+let learningCtx: LearningContext = createLearningContext();
 let statusBarItem: vscode.StatusBarItem;
 let currentPanel: vscode.WebviewPanel | undefined = undefined;
 let terminalManager: TerminalManager;
@@ -106,9 +114,7 @@ export function activate(context: vscode.ExtensionContext) {
 					"Auto: planning + executing from transcript...",
 				);
 				try {
-					await vscode.commands.executeCommand(
-						"gitty.planAndExecuteFromTranscript",
-					);
+					await vscode.commands.executeCommand("gitty.routeFromTranscript");
 				} catch (e: any) {
 					outputChannel.appendLine(`Auto Plan Error: ${e.message}`);
 				} finally {
@@ -213,13 +219,29 @@ export function activate(context: vscode.ExtensionContext) {
 	const voiceStopCommand = vscode.commands.registerCommand(
 		"gitty.voiceStop",
 		async () => {
+			stopSpeaking();
 			voiceController.stop();
 			if (wakeWordService) {
 				await wakeWordService.stop();
 				wakeWordService = undefined;
 				outputChannel.appendLine("[Gitty] Wake word service stopped.");
 			}
+
+			// Hard Reset of State & Flags
+			sttInProgress = false;
+			autoPlanExecuteInProgress = false;
+
+			state.isListening = false;
+			state.lastVerifiedCommand = undefined;
+			state.repoContext = undefined;
+			state.lastPlan = undefined;
+			state.voice = { state: "off" };
+
+			// Reset Learning Context
+			learningCtx = createLearningContext();
+
 			broadcastState();
+			outputChannel.appendLine("[Gitty] Full state reset (except settings).");
 		},
 	);
 
@@ -248,7 +270,7 @@ export function activate(context: vscode.ExtensionContext) {
 				});
 
 				outputChannel.appendLine(`[Gitty] Groq Response: ${response}`);
-				vscode.window.showInformationMessage(`Groq says: ${response}`);
+				// vscode.window.showInformationMessage(\`Groq says: \${response}\`);
 			} catch (e: any) {
 				outputChannel.appendLine(`[Gitty] Groq Error: ${e.message}`);
 				vscode.window.showErrorMessage(`Groq Ping Failed: ${e.message}`);
@@ -306,6 +328,14 @@ export function activate(context: vscode.ExtensionContext) {
 					timeoutMs: 30000,
 				});
 
+				// Learning Ctx Update c)
+				learningCtx.lastCommandOutput = {
+					ok: result.exitCode === 0,
+					exitCode: result.exitCode ?? undefined,
+					stdout: result.stdout ? result.stdout.substring(0, 2000) : "",
+					stderr: result.stderr ? result.stderr.substring(0, 2000) : "",
+				};
+
 				outputChannel.appendLine(result.stdout);
 				if (result.stderr && result.stderr.trim().length > 0) {
 					outputChannel.appendLine("[stderr]");
@@ -315,9 +345,7 @@ export function activate(context: vscode.ExtensionContext) {
 				if (result.timedOut) {
 					vscode.window.showWarningMessage("Command timed out.");
 				} else if (result.exitCode === 0) {
-					vscode.window.showInformationMessage(
-						"Command executed successfully.",
-					);
+					// vscode.window.showInformationMessage("Command executed successfully.");
 					state.lastVerifiedCommand = plan.command; // track as last verified
 					broadcastState();
 					// Refresh context if successful
@@ -352,6 +380,204 @@ export function activate(context: vscode.ExtensionContext) {
 		},
 	);
 
+	// Command: Answer Learning Question
+	const answerLearningQuestionCommand = vscode.commands.registerCommand(
+		"gitty.answerLearningQuestion",
+		async () => {
+			const transcript =
+				learningCtx.lastTranscript ||
+				voiceController.getSnapshot().lastHeardText;
+
+			if (!transcript || transcript.trim().length === 0) {
+				vscode.window.showInformationMessage("No question heard.");
+				return;
+			}
+
+			outputChannel.appendLine(`[Gitty] Answering Question: "${transcript}"`);
+
+			const cfg = readConfig();
+			if (!cfg.groqApiKey) {
+				vscode.window.showErrorMessage("Gitty: Groq API Key is missing.");
+				return;
+			}
+
+			// Build Context
+			const repo = learningCtx.repoSummary || {};
+			const plan = learningCtx.lastPlan;
+			const out = learningCtx.lastCommandOutput;
+			const history = learningCtx.recentQA || [];
+
+			const contextMsg = `
+Repo Context:
+Branch: ${repo.branch || "unknown"}
+Status: ${repo.statusPorcelain || "unknown"}
+Git Root: ${repo.gitRoot || "unknown"}
+
+Last Planned Command:
+${plan ? `Cmd: ${plan.command}\nRisk: ${plan.risk}\nExp: ${plan.explanation}` : "None"}
+
+Last Command Output:
+${out ? `Exit: ${out.exitCode}\nStdout: ${out.stdout}` : "None"}
+
+Recent Q&A:
+${history.map((h) => `Q: ${h.q}\nA: ${h.a}`).join("\n")}
+`;
+
+			try {
+				const answer = await groqChatComplete({
+					apiKey: cfg.groqApiKey,
+					model: cfg.groqModel || "llama-3.3-70b-versatile",
+					messages: [
+						{
+							role: "system",
+							content: `You are Gitty in Learning Mode. Answer the user's question about git based on the provided repo context and the proposed command. Be concise (1–5 sentences). If unsure, ask one clarifying question. Do not output JSON.`,
+						},
+						{
+							role: "user",
+							content: `Context:
+${contextMsg}
+
+Question: "${transcript}"`,
+						},
+					],
+					temperature: 0.2,
+					maxTokens: 250,
+				});
+
+				outputChannel.appendLine(`[Gitty] Answer: ${answer}`);
+
+				// Update State
+				learningCtx.lastLearningText = answer;
+				addQATurn(learningCtx, { q: transcript, a: answer });
+
+				// Force broadcast
+				broadcastState();
+
+				// TTS
+				if (cfg.elevenLabsEnabled && cfg.elevenLabsVoiceId) {
+					context.secrets.get("gitty.elevenlabs.apiKey").then((apiKey) => {
+						if (apiKey) {
+							void speakText(context, answer, {
+								voiceId: cfg.elevenLabsVoiceId!,
+								modelId: cfg.elevenLabsModelId,
+								outputFormat: cfg.elevenLabsOutputFormat,
+							}).catch((err) => {
+								outputChannel.appendLine(`[Gitty] TTS Error: ${err.message}`);
+							});
+						}
+					});
+				}
+			} catch (e: any) {
+				outputChannel.appendLine(`[Gitty] Q&A Error: ${e.message}`);
+				vscode.window.showErrorMessage(
+					"Failed to answer question through Groq.",
+				);
+			}
+		},
+	);
+
+	// Command: Route From Transcript (Groq Router)
+	const routeFromTranscriptCommand = vscode.commands.registerCommand(
+		"gitty.routeFromTranscript",
+		async () => {
+			const transcript =
+				learningCtx.lastTranscript ||
+				voiceController.getSnapshot().lastHeardText;
+
+			if (!transcript || transcript.trim().length === 0) {
+				// vscode.window.showInformationMessage("No transcript yet.");
+				return;
+			}
+
+			// If Learning Mode OFF -> always command
+			if (!state.learningModeEnabled) {
+				await vscode.commands.executeCommand(
+					"gitty.planAndExecuteFromTranscript",
+				);
+				return;
+			}
+
+			// Learning Mode ON -> Classify
+			const cfg = readConfig();
+			if (!cfg.groqApiKey) {
+				vscode.window.showErrorMessage("Gitty: Groq API Key is missing.");
+				return;
+			}
+
+			outputChannel.appendLine(`[Gitty] Routing: "${transcript}"`);
+
+			try {
+				const response = await groqChatComplete({
+					apiKey: cfg.groqApiKey,
+					model: cfg.groqModel || "llama-3.3-70b-versatile",
+					messages: [
+						{
+							role: "system",
+							content: `You are a router. Classify the user's utterance as either:
+- command: they want Gitty to plan/run an action
+- question: they want explanation/advice
+Return ONLY valid JSON.
+Example JSON: {"type":"question","confidence":0.9,"reason":"starts with what"}`,
+						},
+						{
+							role: "user",
+							content: `Utterance: "${transcript}"
+
+Examples:
+- "commit all my files..." => command
+- "what does rebase do?" => question
+- "is this safe?" => question
+- "switch to main and pull" => command
+- "why is this high risk?" => question
+
+Return ONLY the JSON object.`,
+						},
+					],
+					temperature: 0,
+					maxTokens: 100,
+				});
+
+				// Robust JSON parsing
+				let jsonStr = response;
+				const jsonStart = response.indexOf("{");
+				const jsonEnd = response.lastIndexOf("}");
+				if (jsonStart >= 0 && jsonEnd > jsonStart) {
+					jsonStr = response.substring(jsonStart, jsonEnd + 1);
+				}
+
+				let classification = { type: "question", confidence: 0 };
+				try {
+					classification = JSON.parse(jsonStr);
+				} catch (e) {
+					outputChannel.appendLine(
+						`[Gitty] Router JSON parse failed. Defaulting to question. Raw: ${response}`,
+					);
+				}
+
+				outputChannel.appendLine(
+					`[Gitty] Classified as: ${classification.type} (${classification.confidence})`,
+				);
+
+				if (
+					classification.type === "command" &&
+					(classification.confidence || 0) >= 0.6
+				) {
+					await vscode.commands.executeCommand(
+						"gitty.planAndExecuteFromTranscript",
+					);
+				} else {
+					// Fallback to Question
+					await vscode.commands.executeCommand("gitty.answerLearningQuestion");
+				}
+			} catch (e: any) {
+				outputChannel.appendLine(`[Gitty] Router Error: ${e.message}`);
+				// Fallback to command if router fails? Or just show error?
+				// "Safe" behavior might be to do nothing or ask user.
+				// Let's just log.
+			}
+		},
+	);
+
 	// Command: Set ElevenLabs API Key
 	const setElevenLabsApiKeyCommand = vscode.commands.registerCommand(
 		"gitty.setElevenLabsApiKey",
@@ -363,7 +589,7 @@ export function activate(context: vscode.ExtensionContext) {
 			});
 			if (output) {
 				await context.secrets.store("gitty.elevenlabs.apiKey", output);
-				vscode.window.showInformationMessage("ElevenLabs API key saved.");
+				// vscode.window.showInformationMessage("ElevenLabs API key saved.");
 			}
 		},
 	);
@@ -383,6 +609,8 @@ export function activate(context: vscode.ExtensionContext) {
 		groqPingCommand,
 		executeLastPlanCommand,
 		planAndExecuteCommand,
+		routeFromTranscriptCommand,
+		answerLearningQuestionCommand,
 		voiceStartCommand,
 		voiceStopCommand,
 		setElevenLabsApiKeyCommand,
@@ -454,7 +682,9 @@ function broadcastState() {
 			voice: state.voice,
 			config: state.config,
 			wakeWordRunning: wakeWordService ? wakeWordService.isRunning : false,
-			lastPlan: state.lastPlan,
+			lastPlan: state.lastPlan || null, // Ensure null is sent
+			learningModeEnabled: state.learningModeEnabled,
+			learningText: learningCtx.lastLearningText,
 		});
 	}
 }
@@ -528,6 +758,13 @@ function setupWebview(context: vscode.ExtensionContext) {
 						"gitty",
 					);
 					break;
+				case "setLearningMode":
+					state.learningModeEnabled = message.enabled;
+					outputChannel.appendLine(
+						`[Gitty] Learning Mode set to: ${message.enabled}`,
+					);
+					broadcastState();
+					break;
 			}
 		},
 		undefined,
@@ -595,6 +832,67 @@ function getWebviewContent(_initialState: GittyState) {
 
         .settings-btn:hover {
             color: #ccc;
+        }
+
+        /* Toggle Switch */
+        .toggle-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 34px;
+            height: 20px;
+        }
+
+        .switch input { 
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #444;
+            transition: .4s;
+            border-radius: 20px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: #7C7CFF;
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(14px);
+        }
+
+        .toggle-label {
+            font-size: 11px;
+            color: #888;
+            font-weight: 500;
         }
 
         h1 {
@@ -694,6 +992,31 @@ function getWebviewContent(_initialState: GittyState) {
             line-height: 1.4;
         }
 
+        .learning-card {
+            background: rgba(40, 45, 60, 0.9);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: left;
+            border: 1px solid rgba(124, 124, 255, 0.2);
+            margin-top: 10px;
+        }
+
+        .learning-label {
+            font-size: 10px;
+            color: #7C7CFF;
+            font-weight: bold;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .learning-text {
+            font-size: 13px;
+            color: #E0E0E0;
+            line-height: 1.4;
+            font-style: italic;
+        }
+
         .controls {
             display: flex;
             gap: 10px;
@@ -739,6 +1062,14 @@ function getWebviewContent(_initialState: GittyState) {
 </head>
 <body>
     <div class="card">
+        <div class="toggle-container" title="Enable Learning Mode">
+            <span class="toggle-label">Learn</span>
+            <label class="switch">
+                <input type="checkbox" id="chk-learning-mode">
+                <span class="slider"></span>
+            </label>
+        </div>
+
         <button id="btn-settings" class="settings-btn" title="Open Settings">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="3"></circle>
@@ -767,6 +1098,14 @@ function getWebviewContent(_initialState: GittyState) {
             </div>
         </div>
 
+        <!-- Learning Section -->
+        <div id="learning-section" style="display: none;">
+             <div class="learning-card">
+                 <div class="learning-label">Learning</div>
+                 <div id="learning-content" class="learning-text"></div>
+             </div>
+        </div>
+
         <!-- Manual Controls -->
         <div class="controls">
             <button id="btn-start" class="btn">Start</button>
@@ -785,12 +1124,17 @@ function getWebviewContent(_initialState: GittyState) {
         const planCmd = document.getElementById('plan-command');
         const planExp = document.getElementById('plan-explanation');
         const planControls = document.getElementById('plan-controls');
+        const chkLearningMode = document.getElementById('chk-learning-mode');
+        const learningSection = document.getElementById('learning-section');
+        const learningContent = document.getElementById('learning-content');
         
         // State
         let localState = {
             voiceState: 'off',
             plan: null,
-            planDismissed: false
+            planDismissed: false,
+            learningModeEnabled: ${_initialState.learningModeEnabled},
+            learningText: ''
         };
 
         // Icons
@@ -812,6 +1156,9 @@ function getWebviewContent(_initialState: GittyState) {
         document.getElementById('btn-settings').addEventListener('click', () => {
              vscode.postMessage({ command: 'openSettings' });
         });
+        chkLearningMode.addEventListener('change', (e) => {
+            vscode.postMessage({ command: 'setLearningMode', enabled: e.target.checked });
+        });
 
         window.addEventListener('message', event => {
             const msg = event.data;
@@ -819,6 +1166,12 @@ function getWebviewContent(_initialState: GittyState) {
                 if (msg.voice) {
                     localState.voiceState = msg.voice.state;
                 }
+                if (typeof msg.learningModeEnabled !== 'undefined') {
+                    localState.learningModeEnabled = msg.learningModeEnabled;
+                }
+                
+                // Always update (allows clearing)
+                localState.learningText = msg.learningText || '';
                 
                 if (msg.lastPlan) {
                     const isNew = !localState.plan || (localState.plan.command !== msg.lastPlan.command);
@@ -826,6 +1179,10 @@ function getWebviewContent(_initialState: GittyState) {
                     if (isNew) {
                          localState.planDismissed = false;
                     }
+                } else {
+                    // Explicit clear if missing/null in msg
+                    localState.plan = null;
+                    localState.planDismissed = false;
                 }
                 
                 render();
@@ -833,6 +1190,9 @@ function getWebviewContent(_initialState: GittyState) {
         });
 
         function render() {
+            // Sync Toggle
+            chkLearningMode.checked = localState.learningModeEnabled;
+
             // 1. Status Text & Icon Class
             let sText = "Idle";
             let iconClass = "idle";
@@ -920,6 +1280,14 @@ function getWebviewContent(_initialState: GittyState) {
             } else {
                 planSection.style.display = 'none';
             }
+
+             // 3. Learning Section
+             if (localState.learningModeEnabled && localState.learningText) {
+                 learningSection.style.display = 'block';
+                 learningContent.textContent = localState.learningText;
+             } else {
+                 learningSection.style.display = 'none';
+             }
         }
     </script>
 </body>
@@ -1029,14 +1397,15 @@ async function runStt(
 					const text = (result.text || "").trim();
 					outputChannel.appendLine(`STT: ${text}`);
 					if (text.length > 0) {
-						vscode.window.showInformationMessage(
-							`Heard: "${text.substring(0, 120)}"`,
-						);
+						// vscode.window.showInformationMessage(\`Heard: "\${text.substring(0, 120)}"\`);
 						voiceController.setHeardText(text);
+						// Learning Ctx Update a)
+						learningCtx.lastTranscript = text;
+
 						broadcastState();
 						resolve(text);
 					} else {
-						vscode.window.showInformationMessage("Heard nothing.");
+						// vscode.window.showInformationMessage("Heard nothing.");
 						resolve(undefined);
 					}
 				}
@@ -1113,15 +1482,15 @@ Constraints:
 3. If intent is ambiguous or dangerous, set risk="high" or choose a read-only command like "git status".
 4. If checking status/diff, set risk="low".
 5. If modifying history (rebase, reset --hard), set risk="high".
-6. Explanation should be 1-2 sentences, narrative style. This is spoken back to the user.
-6. Return ONLY the JSON object.`,
+6. Explanation should be 1-2 sentences, narrative style. This is spoken back to the user. Ensure it is simple to understand.
+7. Return ONLY the JSON object.`,
 				},
 			],
 			temperature: 0.2,
 			maxTokens: 280,
 		});
 
-		outputChannel.appendLine(`[Gitty] Raw Plan JSON: ${response}`);
+		// outputChannel.appendLine(\`[Gitty] Raw Plan JSON: \${response}\`);
 
 		// Robust JSON parsing
 		let jsonStart = response.indexOf("{");
@@ -1148,17 +1517,34 @@ Constraints:
 
 		// Save Plan
 		state.lastPlan = plan;
+
+		// Learning Ctx Update b)
+		learningCtx.lastPlan = plan;
+		learningCtx.lastLearningText = plan.explanation;
+		if (state.repoContext) {
+			const rc = state.repoContext;
+			learningCtx.repoSummary = {
+				branch: rc.branch || undefined,
+				gitRoot: rc.gitRoot || undefined,
+				statusPorcelain: rc.statusPorcelain
+					? rc.statusPorcelain.substring(0, 2000)
+					: undefined,
+			};
+		}
+
 		outputChannel.appendLine(`[Gitty] Plan Accepted:`);
 		outputChannel.appendLine(`  Cmd: ${plan.command}`);
 		outputChannel.appendLine(`  Risk: ${plan.risk}`);
 		outputChannel.appendLine(`  Exp: ${plan.explanation}`);
 		outputChannel.show(true);
 
+		/*
 		const shortCmd =
 			plan.command.length > 80
 				? plan.command.substring(0, 80) + "..."
 				: plan.command;
-		vscode.window.showInformationMessage(`Planned: ${shortCmd}`);
+		vscode.window.showInformationMessage(\`Planned: \${shortCmd}\`);
+		*/
 
 		broadcastState();
 
