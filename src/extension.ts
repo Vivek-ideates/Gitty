@@ -1001,25 +1001,23 @@ Constraints:
 
 		broadcastState();
 
-		// TTS: Speak explanation
-		try {
-			const elevenCfg = state.config;
-			const apiKey = await context.secrets.get("gitty.elevenlabs.apiKey");
-			if (
-				elevenCfg.elevenLabsEnabled &&
-				apiKey &&
-				elevenCfg.elevenLabsVoiceId
-			) {
-				const textToSpeak =
-					plan.explanation || "Here is what I propose to run.";
-				await speakText(context, textToSpeak, {
-					voiceId: elevenCfg.elevenLabsVoiceId,
-					modelId: elevenCfg.elevenLabsModelId,
-					outputFormat: elevenCfg.elevenLabsOutputFormat,
-				});
-			}
-		} catch (ttsErr: any) {
-			outputChannel.appendLine(`[Gitty] TTS Error: ${ttsErr.message}`);
+		// TTS: Speak explanation (concurrent)
+		const elevenCfg = state.config;
+		if (elevenCfg.elevenLabsEnabled && elevenCfg.elevenLabsVoiceId) {
+			context.secrets.get("gitty.elevenlabs.apiKey").then((apiKey) => {
+				if (apiKey) {
+					const textToSpeak =
+						plan.explanation || "Here is what I propose to run.";
+					// Fire and forget - do not await
+					void speakText(context, textToSpeak, {
+						voiceId: elevenCfg.elevenLabsVoiceId,
+						modelId: elevenCfg.elevenLabsModelId,
+						outputFormat: elevenCfg.elevenLabsOutputFormat,
+					}).catch((ttsErr) => {
+						outputChannel.appendLine(`[Gitty] TTS Error: ${ttsErr.message}`);
+					});
+				}
+			});
 		}
 	} catch (e: any) {
 		outputChannel.appendLine(`[Gitty] Planning Error: ${e.message}`);

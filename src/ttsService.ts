@@ -46,7 +46,7 @@ export async function speakText(
 	}
 
 	try {
-        // channel.appendLine(`[TTS] Generating audio for: "${text.substring(0, 20)}..."`);
+		// channel.appendLine(`[TTS] Generating audio for: "${text.substring(0, 20)}..."`);
 		const mp3 = await elevenLabsTtsMp3({
 			apiKey,
 			voiceId,
@@ -60,10 +60,7 @@ export async function speakText(
 			await fs.promises.mkdir(storagePath, { recursive: true });
 		}
 
-		const tempFilePath = path.join(
-			storagePath,
-			`gitty-tts-${Date.now()}.mp3`,
-		);
+		const tempFilePath = path.join(storagePath, `gitty-tts-${Date.now()}.mp3`);
 		await fs.promises.writeFile(tempFilePath, mp3);
 
 		if (os.platform() === "darwin") {
@@ -78,10 +75,8 @@ export async function speakText(
 			// Cleanup
 			await fs.promises.unlink(tempFilePath).catch(() => {});
 		} else {
-			channel.appendLine(
-				"[TTS] Playback skipped: Platform is not macOS.",
-			);
-            await fs.promises.unlink(tempFilePath).catch(() => {});
+			channel.appendLine("[TTS] Playback skipped: Platform is not macOS.");
+			await fs.promises.unlink(tempFilePath).catch(() => {});
 		}
 	} catch (error: any) {
 		channel.appendLine(`[TTS] Generation Error: ${error.message}`);

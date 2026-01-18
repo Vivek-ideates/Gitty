@@ -39,8 +39,14 @@ export function readConfig(): GittyConfig {
 
 	const elevenLabsEnabled = cfg.get<boolean>("elevenlabs.enabled", false);
 	const elevenLabsVoiceId = cfg.get<string>("elevenlabs.voiceId", "");
-	const elevenLabsModelId = cfg.get<string>("elevenlabs.modelId", "eleven_turbo_v2_5");
-	const elevenLabsOutputFormat = cfg.get<string>("elevenlabs.outputFormat", "mp3_22050_32");
+	const elevenLabsModelId = cfg.get<string>(
+		"elevenlabs.modelId",
+		"eleven_turbo_v2_5",
+	);
+	const elevenLabsOutputFormat = cfg.get<string>(
+		"elevenlabs.outputFormat",
+		"mp3_22050_32",
+	);
 
 	return {
 		voiceEnabled,

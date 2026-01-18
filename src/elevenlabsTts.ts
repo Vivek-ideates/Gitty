@@ -40,9 +40,7 @@ export async function elevenLabsTtsMp3(args: {
 				res.on("data", (chunk) => (errorBody += chunk));
 				res.on("end", () => {
 					reject(
-						new Error(
-							`ElevenLabs API Error: ${res.statusCode} - ${errorBody}`,
-						),
+						new Error(`ElevenLabs API Error: ${res.statusCode} - ${errorBody}`),
 					);
 				});
 				return;
