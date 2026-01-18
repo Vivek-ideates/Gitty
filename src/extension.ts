@@ -272,125 +272,33 @@ export function activate(context: vscode.ExtensionContext) {
 	const sttCaptureOncePy = vscode.commands.registerCommand(
 		"gitty.sttCaptureOncePy",
 		async () => {
-			if (
-				!vscode.workspace.workspaceFolders ||
-				vscode.workspace.workspaceFolders.length === 0
-			) {
-				vscode.window.showErrorMessage("No workspace folder open.");
-				return;
-			}
-			const workspaceRootOrRepoRoot =
-				vscode.workspace.workspaceFolders[0].uri.fsPath;
-
-			const pythonPath = context.asAbsolutePath(".venv/bin/python");
-			const scriptPath = context.asAbsolutePath("scripts/stt_capture.py");
-			const modelDir = context.asAbsolutePath(
-				"resources/vosk-model/vosk-model-small-en-us-0.15",
-			);
-
-			if (!fs.existsSync(pythonPath)) {
-				const msg = `Python interpreter not found at ${pythonPath}. Please create venv and install dependencies.`;
-				vscode.window.showErrorMessage(msg);
-				return;
-			}
-
-			if (!fs.existsSync(modelDir)) {
-				const msg = `Vosk model not found at ${modelDir}. Please download and unzip the model.`;
-				vscode.window.showErrorMessage(msg);
-				return;
-			}
-
-			vscode.window.showInformationMessage("Listening for 5 seconds...");
-			outputChannel.appendLine(
-				`Running STT with python: ${pythonPath} ${scriptPath}`,
-			);
-
-			const child = spawn(
-				pythonPath,
-				[
-					scriptPath,
-					"--model",
-					modelDir,
-					"--seconds",
-					"5",
-					"--samplerate",
-					"16000",
-				],
-				{
-					cwd: workspaceRootOrRepoRoot,
-				},
-			);
-
-			let stdoutData = "";
-			let stderrData = "";
-
-			child.stdout.on("data", (data) => {
-				stdoutData += data.toString();
-			});
-
-			child.stderr.on("data", (data) => {
-				stderrData += data.toString();
-			});
-
-			child.on("close", async (code) => {
-				if (code !== 0) {
-					outputChannel.appendLine(`STT process exited with code ${code}`);
-					outputChannel.appendLine(`stderr: ${stderrData}`);
-					outputChannel.appendLine(`stdout: ${stdoutData}`);
-					vscode.window.showErrorMessage(`STT failed. Check Output -> Gitty.`);
-					return;
-				}
-
-				// Parse last line
-				const lines = stdoutData.trim().split("\n");
-				let lastLine = "";
-				for (let i = lines.length - 1; i >= 0; i--) {
-					if (lines[i].trim().length > 0) {
-						lastLine = lines[i];
-						break;
+			const text = await runStt(context, 12, 2200);
+			if (text) {
+				// Auto Plan & Execute
+				if (!autoPlanExecuteInProgress) {
+					autoPlanExecuteInProgress = true;
+					outputChannel.appendLine(
+						"Auto: planning + executing from transcript...",
+					);
+					try {
+						await vscode.commands.executeCommand(
+							"gitty.planAndExecuteFromTranscript",
+						);
+					} catch (e: any) {
+						outputChannel.appendLine(`Auto Plan Error: ${e.message}`);
+					} finally {
+						autoPlanExecuteInProgress = false;
 					}
 				}
+			}
+		},
+	);
 
-				try {
-					const result = JSON.parse(lastLine);
-					if (result.error) {
-						vscode.window.showErrorMessage(`STT Error: ${result.error}`);
-						outputChannel.appendLine(`STT JSON Error: ${result.error}`);
-					} else {
-						const text = (result.text || "").trim();
-						outputChannel.appendLine(`STT: ${text}`);
-						if (text.length > 0) {
-							vscode.window.showInformationMessage(
-								`Heard: "${text.substring(0, 120)}"`,
-							);
-							voiceController.setHeardText(text);
-							broadcastState();
-
-							// Auto Plan & Execute
-							if (!autoPlanExecuteInProgress) {
-								autoPlanExecuteInProgress = true;
-								outputChannel.appendLine(
-									"Auto: planning + executing from transcript...",
-								);
-								try {
-									await vscode.commands.executeCommand(
-										"gitty.planAndExecuteFromTranscript",
-									);
-								} catch (e: any) {
-									outputChannel.appendLine(`Auto Plan Error: ${e.message}`);
-								} finally {
-									autoPlanExecuteInProgress = false;
-								}
-							}
-						} else {
-							vscode.window.showInformationMessage("Heard nothing.");
-						}
-					}
-				} catch (e) {
-					outputChannel.appendLine(`Failed to parse JSON: ${lastLine}`);
-					vscode.window.showErrorMessage("STT JSON parse error.");
-				}
-			});
+	// Command: Capture Voice Confirmation
+	const sttCaptureConfirmPy = vscode.commands.registerCommand(
+		"gitty.sttCaptureConfirmPy",
+		async () => {
+			return await runStt(context, 6, 1200);
 		},
 	);
 
@@ -1200,6 +1108,129 @@ function getWebviewContent(initialState: GittyState) {
     </script>
 </body>
 </html>`;
+}
+
+async function runStt(
+	context: vscode.ExtensionContext,
+	maxSeconds: number,
+	silenceMs: number,
+): Promise<string | undefined> {
+	if (
+		!vscode.workspace.workspaceFolders ||
+		vscode.workspace.workspaceFolders.length === 0
+	) {
+		vscode.window.showErrorMessage("No workspace folder open.");
+		return undefined;
+	}
+	const workspaceRootOrRepoRoot =
+		vscode.workspace.workspaceFolders[0].uri.fsPath;
+
+	const pythonPath = context.asAbsolutePath(".venv/bin/python");
+	const scriptPath = context.asAbsolutePath("scripts/stt_capture.py");
+	const modelDir = context.asAbsolutePath(
+		"resources/vosk-model/vosk-model-small-en-us-0.15",
+	);
+
+	if (!fs.existsSync(pythonPath)) {
+		const msg = `Python interpreter not found at ${pythonPath}. Please create venv and install dependencies.`;
+		vscode.window.showErrorMessage(msg);
+		return undefined;
+	}
+
+	if (!fs.existsSync(modelDir)) {
+		const msg = `Vosk model not found at ${modelDir}. Please download and unzip the model.`;
+		vscode.window.showErrorMessage(msg);
+		return undefined;
+	}
+
+	vscode.window.setStatusBarMessage(
+		`Listening (max ${maxSeconds}s)...`,
+		maxSeconds * 1000,
+	);
+	outputChannel.appendLine(
+		`Running STT with python: ${pythonPath} ${scriptPath} --max_seconds ${maxSeconds} --silence_ms ${silenceMs}`,
+	);
+
+	return new Promise((resolve) => {
+		const child = spawn(
+			pythonPath,
+			[
+				scriptPath,
+				"--model",
+				modelDir,
+				"--max_seconds",
+				String(maxSeconds),
+				"--silence_ms",
+				String(silenceMs),
+				"--vad_mode",
+				"3",
+				"--samplerate",
+				"16000",
+			],
+			{
+				cwd: workspaceRootOrRepoRoot,
+			},
+		);
+
+		let stdoutData = "";
+		let stderrData = "";
+
+		child.stdout.on("data", (data) => {
+			stdoutData += data.toString();
+		});
+
+		child.stderr.on("data", (data) => {
+			stderrData += data.toString();
+		});
+
+		child.on("close", async (code) => {
+			if (code !== 0) {
+				outputChannel.appendLine(`STT process exited with code ${code}`);
+				outputChannel.appendLine(`stderr: ${stderrData}`);
+				outputChannel.appendLine(`stdout: ${stdoutData}`);
+				vscode.window.showErrorMessage(`STT failed. Check Output -> Gitty.`);
+				resolve(undefined);
+				return;
+			}
+
+			// Parse last line
+			const lines = stdoutData.trim().split("\n");
+			let lastLine = "";
+			for (let i = lines.length - 1; i >= 0; i--) {
+				if (lines[i].trim().length > 0) {
+					lastLine = lines[i];
+					break;
+				}
+			}
+
+			try {
+				const result = JSON.parse(lastLine);
+				if (result.error) {
+					vscode.window.showErrorMessage(`STT Error: ${result.error}`);
+					outputChannel.appendLine(`STT JSON Error: ${result.error}`);
+					resolve(undefined);
+				} else {
+					const text = (result.text || "").trim();
+					outputChannel.appendLine(`STT: ${text}`);
+					if (text.length > 0) {
+						vscode.window.showInformationMessage(
+							`Heard: "${text.substring(0, 120)}"`,
+						);
+						voiceController.setHeardText(text);
+						broadcastState();
+						resolve(text);
+					} else {
+						vscode.window.showInformationMessage("Heard nothing.");
+						resolve(undefined);
+					}
+				}
+			} catch (e) {
+				outputChannel.appendLine(`Failed to parse JSON: ${lastLine}`);
+				vscode.window.showErrorMessage("STT JSON parse error.");
+				resolve(undefined);
+			}
+		});
+	});
 }
 
 export function deactivate() {}
