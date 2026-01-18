@@ -21,7 +21,7 @@ def main():
         parser.add_argument("--model", required=True, help="Path to Vosk model")
         parser.add_argument("--samplerate", type=int, default=16000, help="Sample rate")
         parser.add_argument(
-            "--max_seconds", type=float, default=12.0, help="Max duration cap"
+            "--max_seconds", type=float, default=5.0, help="Max duration cap"
         )
         parser.add_argument(
             "--silence_ms", type=int, default=2200, help="Stop after ms silence"
